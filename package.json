@@ -47,6 +47,7 @@
     "*.ts",
     "!*.test.ts",
     "README.md",
+    "README.zh-CN.md",
     "CONTEXT.md",
     "LICENSE"
   ],
