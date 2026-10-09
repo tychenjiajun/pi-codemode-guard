@@ -41,6 +41,10 @@ describe("readPiCodemodeGuardDetails", () => {
       [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: undefined },
     });
     expect(missing?.dialect).toBe("unknown");
+    const tanstack = readPiCodemodeGuardDetails({
+      [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "tanstack" },
+    });
+    expect(tanstack?.dialect).toBe("tanstack");
   });
 
   it("returns undefined when a field has the wrong type", () => {

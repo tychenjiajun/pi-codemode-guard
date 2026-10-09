@@ -25,6 +25,15 @@ describe("coerceCodemodeArguments", () => {
     expect(coerceCodemodeArguments({ input: "return 1;" }).code).toBe("return 1;");
   });
 
+  it("accepts the TanStack typescriptCode field", () => {
+    expect(coerceCodemodeArguments({ typescriptCode: "const x: number = 1;" })).toEqual({
+      code: "const x: number = 1;",
+      kind: "alias-field",
+      field: "typescriptCode",
+    });
+    expect(coerceCodemodeArguments({ typescript_code: "return 1;" }).code).toBe("return 1;");
+  });
+
   it("unwraps a nested source object", () => {
     expect(coerceCodemodeArguments({ code: { language: "javascript", content: "return 1;" } })).toEqual({
       code: "return 1;",

@@ -74,6 +74,44 @@ export function walk(
   for (const child of childNodes(node)) walk(child, nextParents, visit);
 }
 
+/** Names bound by the script itself, so a local object is not mistaken for a tool. */
+export function collectBoundNames(ast: AstNode): Set<string> {
+  const bound = new Set<string>();
+  const addPattern = (pattern: AstNode | undefined | null): void => {
+    if (!pattern) return;
+    walk(pattern, [], (node) => {
+      if (node.type === "Identifier") bound.add(node.name as string);
+    });
+  };
+
+  walk(ast, [], (node) => {
+    switch (node.type) {
+      case "VariableDeclarator":
+        addPattern(node.id as AstNode | undefined);
+        break;
+      case "FunctionDeclaration":
+      case "FunctionExpression":
+      case "ArrowFunctionExpression":
+        for (const param of (node.params as AstNode[] | undefined) ?? []) addPattern(param);
+        if (node.type === "FunctionDeclaration") addPattern(node.id as AstNode | undefined);
+        break;
+      case "ClassDeclaration":
+        addPattern(node.id as AstNode | undefined);
+        break;
+      case "ImportSpecifier":
+      case "ImportDefaultSpecifier":
+      case "ImportNamespaceSpecifier":
+        addPattern(node.local as AstNode | undefined);
+        break;
+      case "CatchClause":
+        addPattern(node.param as AstNode | undefined);
+        break;
+    }
+  });
+
+  return bound;
+}
+
 /** Lowercase + collapse everything that is not `[a-z0-9]` into `_`, for fuzzy name matching. */
 export function normalizeToolKey(name: string): string {
   return name

@@ -101,10 +101,8 @@ export function createGuardedCodemodeApi(pi: ExtensionAPI): ExtensionAPI {
 
 function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
   const summary = result.passes.length > 0 ? result.passes.join(", ") : result.warnings.join("; ");
-  const dialect =
-    result.dialect === "opencode" || result.dialect === "cloudflare"
-      ? `${result.dialect} → pi`
-      : result.dialect;
+  const translated = result.dialect === "opencode" || result.dialect === "cloudflare" || result.dialect === "tanstack";
+  const dialect = translated ? `${result.dialect} → pi` : result.dialect;
   showGuardStatus(ctx, `🛡 ${dialect} · ${summary}`);
   if (ctx.hasUI) {
     ctx.ui.notify(`pi-codemode-guard: compiled codemode script (${dialect}; ${summary})`, "info");

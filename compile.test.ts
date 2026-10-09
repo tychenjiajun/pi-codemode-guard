@@ -106,6 +106,48 @@ describe("compileCodemodeSource", () => {
     expect(result.passes.some((pass) => pass.startsWith("cloudflare-dialect"))).toBe(false);
   });
 
+  it("compiles the TanStack AI code mode dialect", () => {
+    const source = [
+      'const cities: Array<string> = ["Tokyo", "Paris"];',
+      "const results = await Promise.all(",
+      "  cities.map((city) => external_getWeather({ location: city })),",
+      ");",
+      "return results;",
+    ].join("\n");
+    const result = compileCodemodeSource(source, { tools: ["getWeather"] });
+    expect(result.dialect).toBe("tanstack");
+    expect(result.passes).toContain("tanstack-typescript");
+    expect(result.passes).toContain("tanstack-dialect(1)");
+    expect(result.code).not.toContain("external_");
+    expect(result.code).not.toContain("Array<string>");
+    expect(result.code).toContain("tools.getWeather({ location: city })");
+  });
+
+  it("awaits a TanStack binding that forgot the await", () => {
+    const result = compileCodemodeSource(
+      'const w = external_getWeather({ location: "London" });\ntext(w);',
+      { tools: ["getWeather"] },
+    );
+    expect(result.dialect).toBe("tanstack");
+    expect(result.code).toContain('const w = await tools.getWeather({ location: "London" });');
+    expect(result.passes).toContain("await-async-calls(1)");
+  });
+
+  it("does not run the TanStack pass on Pi code", () => {
+    const result = compileCodemodeSource('const hits = await searchTools("x");\nreturn hits;');
+    expect(result.dialect).toBe("pi");
+    expect(result.passes.some((pass) => pass.startsWith("tanstack"))).toBe(false);
+  });
+
+  it("compiles TanStack TypeScript idempotently", () => {
+    const once = compileCodemodeSource("const x: number = 1;\nreturn await external_getWeather({ x });", {
+      tools: ["getWeather"],
+    });
+    const twice = compileCodemodeSource(once.code, { tools: ["getWeather"] });
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
   it("awaits a Cloudflare search shim that forgot the await", () => {
     const result = compileCodemodeSource('const m = codemode.search("x");\ntext(m);', { tools: [] });
     expect(result.dialect).toBe("cloudflare");

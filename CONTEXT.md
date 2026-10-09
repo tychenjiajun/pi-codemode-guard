@@ -120,6 +120,24 @@ unresolved providers are left untouched (the latter with a `warning` when a
 catalog is present); positional provider arguments are preserved verbatim because
 the compiler cannot know Pi's parameter names.
 
+## TanStack AI code mode dialect (`@tanstack/ai-code-mode`)
+
+TanStack's `createCodeModeTool` shares the `{ code }` envelope (its input field is
+`typescriptCode`, accepted as an alias), but the sandbox is different: tools are
+global `external_<tool>` async functions and the source is TypeScript, not
+JavaScript. Pi's sandbox is QuickJS running plain JavaScript, so the guard:
+
+| TanStack AI code mode | Pi |
+|---|---|
+| `{ typescriptCode: "…" }` | `{ code: "…" }` (the `typescriptCode` alias) |
+| `external_getWeather({ … })` | `tools.getWeather({ … })` — prefix stripped, rest resolved against the live catalog |
+| `external_my_tool({ … })` with tool `my-tool` | `tools.my_tool({ … })` (Pi's `toCodemodeIdentifier` rule) |
+| TypeScript (annotations, interfaces, `as`, generics) | plain JavaScript (stripped via sucrase before the script is parsed) |
+| `return value`, `console.log`, `Promise.all`, top-level `await` | already valid Pi — left untouched |
+
+The catalog mapping and fallback (exact → fuzzy `normalizeToolKey` → flatten +
+`warning`) are the same ones `resolveToolPath` uses for OpenCode.
+
 ## Pipeline (high level)
 
 ```
@@ -141,8 +159,10 @@ tool_call event (index.ts)
     4 unwrap-iife
     5 opencode-dialect      (only when the dialect is opencode)
     6 cloudflare-dialect    (only when the dialect is cloudflare)
-    7 await-async-calls
-    8 rewrite-tool-identifiers
+    7 tanstack-typescript   (only when the dialect is tanstack: strip TypeScript syntax)
+    8 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
+    9 await-async-calls
+   10 rewrite-tool-identifiers
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -172,10 +192,11 @@ tool_result event → details.piCodemodeGuard + compile receipt
 - **tool_call event** — pi event fired after validation; `event.input` is
   mutable and is not re-validated.
 - **pass** — one best-effort compiler transformation, identified in `passes`.
-- **dialect** — `pi`, `opencode`, `cloudflare`, or `unknown`; OpenCode is the
+- **dialect** — `pi`, `opencode`, `cloudflare`, `tanstack`, or `unknown`; OpenCode is the
   `@opencode-ai/codemode` program API (nested tool paths, `$codemode.search`),
   Cloudflare is the `@cloudflare/codemode` API (`codemode.*`, named providers,
-  bare `async () => { … }` wrapper).
+  bare `async () => { … }` wrapper), TanStack is `@tanstack/ai-code-mode`
+  (`external_<tool>` bindings in TypeScript source).
 - **catalog** — the Pi tool names (`pi.getAllTools()`), needed to collapse an
   OpenCode namespace path to Pi's flat identifier.
 - **guard details** — `details.piCodemodeGuard`, the versioned record of what

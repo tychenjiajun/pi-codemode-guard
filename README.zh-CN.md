@@ -5,14 +5,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** 是一个开源（MIT 协议）、TypeScript 编写的
 [pi](https://github.com/earendil-works/pi) AI 编程智能体扩展，用于**在脚本进入沙箱之前
 修复 LLM 编写的 `codemode` 脚本**。它会补上缺失的 `await`、剥掉 markdown 代码围栏、把
 JSON 工具调用程序转换成真正的 JavaScript、规范化 `@options:` 行、拆掉多余的 async IIFE，
-并翻译 OpenCode 与 Cloudflare agents 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
+并翻译 OpenCode、Cloudflare agents 与 TanStack AI code mode 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
 
 一句话概括：*一个尽力而为、幂等的编译器，把任意 LLM 写坏的 codemode 工具调用转换成
 pi 的 QuickJS 沙箱所期望的确切 JavaScript —— 且完全不 fork codemode 的实现。*

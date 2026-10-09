@@ -2,7 +2,7 @@
   "name": "pi-codemode-guard",
   "version": "0.1.0",
   "type": "module",
-  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, missing await, and the OpenCode / Cloudflare agents dialects",
+  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, missing await, and the OpenCode / Cloudflare agents / TanStack AI code mode dialects",
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
@@ -14,6 +14,10 @@
     "./contract.ts": "./contract.ts",
     "./cloudflare": "./cloudflare.ts",
     "./cloudflare.ts": "./cloudflare.ts",
+    "./tanstack": "./tanstack.ts",
+    "./tanstack.ts": "./tanstack.ts",
+    "./typescript": "./typescript.ts",
+    "./typescript.ts": "./typescript.ts",
     "./dialect": "./dialect.ts",
     "./dialect.ts": "./dialect.ts"
   },
@@ -35,6 +39,7 @@
     "tool-guard",
     "opencode",
     "cloudflare",
+    "tanstack",
     "dialect",
     "quickjs",
     "typescript"
@@ -73,7 +78,8 @@
     "vitest": "^5.0.0"
   },
   "dependencies": {
-    "acorn": "^8.15.0"
+    "acorn": "^8.15.0",
+    "sucrase": "^3.35.1"
   },
   "packageManager": "pnpm@12.6.0"
 }

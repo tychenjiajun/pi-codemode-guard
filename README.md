@@ -5,7 +5,7 @@ English | [简体中文](./README.zh-CN.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
@@ -73,6 +73,8 @@ Two hooks, installed automatically:
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
+| `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
+| `tanstack-dialect` | `external_getWeather({…})` | `tools.getWeather({…})` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -85,11 +87,13 @@ tool call.
 The compiler detects which codemode dialect a script is written in and
 translates it to Pi.
 
-`detectCodemodeDialect(code)` returns `pi`, `opencode`, `cloudflare`, or
-`unknown` with the signals it found. OpenCode-exclusive signals are `$codemode`, a
-`tools.<ns>.<tool>` path (Pi tools are always single-level), and
+`detectCodemodeDialect(code)` returns `pi`, `opencode`, `cloudflare`,
+`tanstack`, or `unknown` with the signals it found. OpenCode-exclusive signals are
+`$codemode`, a `tools.<ns>.<tool>` path (Pi tools are always single-level), and
 `Object.keys(tools)`. Cloudflare signals are a `codemode.<tool>` / `codemode.search`
-platform call and the bare `async () => { … }` program wrapper.
+platform call and the bare `async () => { … }` program wrapper. TanStack signals
+are a bare `external_<tool>` binding reference (never a `tools.external_<tool>`
+member access).
 
 When the dialect is `opencode`, `compileOpencodeDialect` runs before the await
 pass:
@@ -135,6 +139,22 @@ back to `tools.delete()` and `codemode._3d_render()` to `tools._d_render()`.
 Provider namespaces are only rewritten when the catalog confirms them, and names
 bound by the script itself (`const state = {…}`) are never touched. Positional
 provider arguments (`state.readFile("/path")`) are preserved as written.
+
+When the dialect is `tanstack`, [`@tanstack/ai-code-mode`](https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
+programs are translated. The code is TypeScript, so `tanstack-typescript` runs
+first (`unwrap-iife` runs after, in case the model wrapped its code), then
+`compileTanstackDialect` rewrites the bindings:
+
+| TanStack AI code mode | Pi codemode |
+|---|---|
+| `{ typescriptCode: "…" }` | `{ code: "…" }` (via the `typescriptCode` argument alias) |
+| `external_getWeather({…})` | `tools.getWeather({…})` — resolved against the live catalog |
+| `external_my_tool({…})` with tool `my-tool` | `tools.my_tool({…})` (Pi's `toCodemodeIdentifier` rule) |
+| `return value`, `console.log`, `Promise.all`, top-level `await` | already valid Pi — left untouched |
+
+The binding prefix is stripped and the rest resolved through Pi's catalog the
+same way OpenCode namespace paths are; an unresolvable binding is flattened
+identically to OpenCode (and warned about) so it at least parses.
 
 ### What it deliberately leaves alone
 
@@ -185,7 +205,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // what the sandbox received
   passes: string[];     // e.g. ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "cloudflare" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "unknown";
   warnings: string[];
 }
 ```
@@ -214,9 +234,9 @@ JSON-serialized as `{}`, so the tool silently returns nothing. The
 
 Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
 `source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
-IIFE wrappers, missing `await` on async helpers, `tools["a-b"](...)` indexing,
-and OpenCode / Cloudflare dialect tool paths and namespaces — each an independent,
-idempotent compile pass.
+IIFE wrappers, missing `await` on async helpers, `tools["a-b"](…)` indexing,
+and OpenCode / Cloudflare / TanStack AI code mode dialect tool paths and
+namespaces — each an independent, idempotent compile pass.
 
 ### Can a guard bug break my script?
 
@@ -235,7 +255,7 @@ small proxy, keeping the original schema, `models`, `store()` persistence, and
 
 ```bash
 pnpm install
-pnpm test        # 103 unit tests
+pnpm test        # 152 unit tests
 pnpm typecheck
 ```
 

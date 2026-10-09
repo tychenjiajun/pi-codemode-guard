@@ -20,7 +20,7 @@
 // names prefixed with `_`, reserved words suffixed with `_`), which differs from
 // Pi's `toCodemodeIdentifier`, so the live catalog is required to map back.
 
-import { buildCatalog, collectChain, normalizeToolKey, walk, type Catalog, type Replacement, type Resolution } from "./catalog.ts";
+import { buildCatalog, collectBoundNames, collectChain, normalizeToolKey, walk, type Catalog, type Replacement, type Resolution } from "./catalog.ts";
 import { toCodemodeIdentifier } from "./identifiers.ts";
 import { parseScript, type AstNode } from "./parse.ts";
 
@@ -160,44 +160,7 @@ function resolveCloudflarePath(segments: readonly string[], catalog: CloudflareC
   return { identifier: toCodemodeIdentifier(cloudflareUnsanitize(segments[segments.length - 1] ?? "")) };
 }
 
-/** Names bound by the script itself, so a local object is not mistaken for a provider. */
-function collectBoundNames(ast: AstNode): Set<string> {
-  const bound = new Set<string>();
-  const addPattern = (pattern: AstNode | undefined | null): void => {
-    if (!pattern) return;
-    walk(pattern, [], (node) => {
-      if (node.type === "Identifier") bound.add(node.name as string);
-    });
-  };
-
-  walk(ast, [], (node) => {
-    switch (node.type) {
-      case "VariableDeclarator":
-        addPattern(node.id as AstNode | undefined);
-        break;
-      case "FunctionDeclaration":
-      case "FunctionExpression":
-      case "ArrowFunctionExpression":
-        for (const param of (node.params as AstNode[] | undefined) ?? []) addPattern(param);
-        if (node.type === "FunctionDeclaration") addPattern(node.id as AstNode | undefined);
-        break;
-      case "ClassDeclaration":
-        addPattern(node.id as AstNode | undefined);
-        break;
-      case "ImportSpecifier":
-      case "ImportDefaultSpecifier":
-      case "ImportNamespaceSpecifier":
-        addPattern(node.local as AstNode | undefined);
-        break;
-      case "CatchClause":
-        addPattern(node.param as AstNode | undefined);
-        break;
-    }
-  });
-
-  return bound;
-}
-
+/** Whether `node` is the object half of a member expression, i.e. not the final property. */
 function isInnerMember(node: AstNode, parents: readonly AstNode[]): boolean {
   const parent = parents[parents.length - 1];
   return parent?.type === "MemberExpression" && parent.object === node;

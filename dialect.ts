@@ -10,14 +10,23 @@
 //   opencode    — `tools.<ns>.<tool>`, `tools.$codemode.search`, `Object.keys(tools)`
 //   cloudflare  — `codemode.<tool>`, `codemode.search/describe/run/step`, and an
 //                 `async () => { ... }` wrapper as the whole program
+//   tanstack    — bare `external_<tool>` bindings (TanStack AI code mode)
 //
 // Detection is deliberately lexical + shallow-AST only: it never rewrites, so a
 // false positive is a wrong `details.dialect`, not a corrupted script.
+//
+// TanStack's source is TypeScript and often does not parse as JavaScript, so its
+// signal is also checked lexically (a bare `external_<tool>` reference, never a
+// `tools.external_<tool>` member access).
 
 import { collectChain, walk } from "./catalog.ts";
 import { parseScript, type AstNode } from "./parse.ts";
 
-export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "unknown";
+export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "unknown";
+
+const TANSTACK_PREFIX = "external_";
+/** A bare `external_<tool>` reference (not `tools.external_<tool>`), for unparseable TypeScript. */
+const TANSTACK_LEXICAL = /(^|[^.\w$])external_[A-Za-z0-9_$]+/;
 
 export interface DialectDetection {
   readonly dialect: CodemodeDialect;
@@ -74,6 +83,14 @@ export function detectCodemodeDialect(code: string): DialectDetection {
         if (name === "searchTools" || name === "describeTool" || name === "describeNamespace") {
           signals.add(`pi:${name}`);
         }
+        if (name.startsWith(TANSTACK_PREFIX) && name.length > TANSTACK_PREFIX.length) {
+          const parent = parents[parents.length - 1];
+          const isMemberProperty = parent?.type === "MemberExpression" && parent.property === node;
+          const isDeclaration =
+            (parent?.type === "VariableDeclarator" && parent.id === node) ||
+            (parent?.type === "FunctionDeclaration" && parent.id === node);
+          if (!isMemberProperty && !isDeclaration) signals.add("external_<tool>");
+        }
         return;
       }
 
@@ -91,6 +108,10 @@ export function detectCodemodeDialect(code: string): DialectDetection {
     });
 
     if (isAsyncArrowWrapper(ast)) signals.add("async-arrow-wrapper");
+  } else if (TANSTACK_LEXICAL.test(code)) {
+    // No AST (TypeScript does not parse as JavaScript): fall back to the
+    // distinctive bare `external_<tool>` binding name.
+    signals.add("external_<tool>");
   }
 
   const list = [...signals];
@@ -98,6 +119,10 @@ export function detectCodemodeDialect(code: string): DialectDetection {
     (signal) => signal.startsWith("$codemode") || signal === "tools.<namespace>.<tool>" || signal.startsWith("Object.keys(tools"),
   );
   if (opencode) return { dialect: "opencode", signals: list };
+
+  // `external_<tool>` is TanStack-specific, so it wins over the generic bare
+  // async wrapper (a model may wrap TanStack code from Cloudflare habit).
+  if (list.includes("external_<tool>")) return { dialect: "tanstack", signals: list };
 
   const cloudflareNamespace = list.some((signal) => signal.startsWith("codemode."));
   if (cloudflareNamespace) return { dialect: "cloudflare", signals: list };

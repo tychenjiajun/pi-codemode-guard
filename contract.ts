@@ -30,7 +30,7 @@ export interface PiCodemodeGuardDetails {
   readonly passes: readonly string[];
   /** Whether the compiler could parse (or recognize) the source. */
   readonly parsed: boolean;
-  /** The dialect the model wrote: `pi`, `opencode`, `cloudflare`, or `unknown`. */
+  /** The dialect the model wrote: `pi`, `opencode`, `cloudflare`, `tanstack`, or `unknown`. */
   readonly dialect: CodemodeDialect;
   /** Non-fatal problems. */
   readonly warnings: readonly string[];
@@ -41,7 +41,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readDialect(value: unknown): CodemodeDialect {
-  return value === "pi" || value === "opencode" || value === "cloudflare" ? value : "unknown";
+  return value === "pi" || value === "opencode" || value === "cloudflare" || value === "tanstack"
+    ? value
+    : "unknown";
 }
 
 function readStringArray(value: unknown): string[] | undefined {

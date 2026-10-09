@@ -211,6 +211,47 @@ describe("codemodeGuardExtension", () => {
     expect(readPiCodemodeGuardDetails(result.details)?.dialect).toBe("cloudflare");
   });
 
+  it("compiles a TanStack-dialect call through the extension", async () => {
+    const mock = mockPi();
+    codemodeGuardExtension(mock.pi);
+    const registered = mock.registered[0]!; // the augmentCodemodeTool'd codemode tool
+    const ctx = mockContext();
+    const event: Record<string, unknown> = {
+      type: "tool_call",
+      toolName: "codemode",
+      toolCallId: "ts1",
+      input: {
+        typescriptCode:
+          'const city: string = "London";\nconst w = external_bash({ command: "echo" + city });\ntext(w);',
+      },
+    };
+    // Mimic pi running the prepareArguments shim before validation.
+    event.input = registered.prepareArguments!(event.input as unknown);
+    await firstHandler(mock, "tool_call")(event, ctx);
+    const code = (event.input as { code: string }).code;
+    expect(code).not.toContain("external_");
+    expect(code).not.toContain(": string");
+    expect(code).toContain("tools.bash({ command");
+
+    const result = (await firstHandler(mock, "tool_result")(
+      {
+        type: "tool_result",
+        toolName: "codemode",
+        toolCallId: "ts1",
+        input: {},
+        content: [],
+        isError: false,
+        details: {},
+      },
+      ctx,
+    )) as { details?: unknown };
+    const guard = readPiCodemodeGuardDetails(result.details);
+    expect(guard?.dialect).toBe("tanstack");
+    expect(guard?.passes).toContain("tanstack-typescript");
+    expect(guard?.passes).toContain("tanstack-dialect(1)");
+    expect(guard?.passes).toContain("await-async-calls(1)");
+  });
+
   it("stamps a warning-only Cloudflare result", async () => {
     const mock = mockPi();
     codemodeGuardExtension(mock.pi);
