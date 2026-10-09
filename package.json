@@ -21,12 +21,28 @@
     "pi-package",
     "pi-extension",
     "codemode",
+    "llm",
+    "ai-agent",
+    "agentic-coding",
+    "tool-calling",
     "compiler",
+    "transpiler",
     "await",
-    "tool-guard"
+    "tool-guard",
+    "opencode",
+    "quickjs",
+    "typescript"
   ],
-  "author": "Jiajun Chen <tychenjiajun@gmail.com>",
+  "author": "Jiajun Chen <tychenjiajun@live.cn>",
   "license": "MIT",
+  "homepage": "https://github.com/tychenjiajun/pi-codemode-guard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tychenjiajun/pi-codemode-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tychenjiajun/pi-codemode-guard/issues"
+  },
   "files": [
     "*.ts",
     "!*.test.ts",

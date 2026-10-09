@@ -1,7 +1,22 @@
 # pi-codemode-guard
 
-A [pi](https://github.com/earendil-works/pi) extension that **compiles the tool
-calls models write for `codemode` into the JavaScript pi's sandbox expects**.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
+[![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen.svg)](./package.json)
+[![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
+
+**pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
+[pi](https://github.com/earendil-works/pi) AI coding agent that **repairs
+LLM-written `codemode` scripts before they reach the sandbox**. It inserts
+missing `await`, strips markdown fences, converts JSON tool-call programs into
+real JavaScript, normalizes `@options:` lines, unwraps async IIFEs, and
+translates the OpenCode dialect — so AI-generated agent scripts run instead of
+silently failing.
+
+In one sentence: *a best-effort, idempotent compiler that turns broken
+codemode tool calls from any LLM into the exact JavaScript pi's QuickJS sandbox
+expects — without forking the codemode implementation.*
 
 Many models cannot write pi's codemode tool call correctly. They wrap the script
 in a markdown fence, send it as JSON tool calls, use the wrong field name, write
@@ -107,8 +122,13 @@ compatible in the OpenCode → Pi direction, so no rewrite is needed.
 The extension is a pi package:
 
 ```bash
+# straight from GitHub (recommended)
+pi install git:github.com/tychenjiajun/pi-codemode-guard
+
+# or from a local checkout
 pi install /path/to/pi-codemode-guard
-# or run it directly:
+
+# or run it directly without installing
 pi -e /path/to/pi-codemode-guard/index.ts
 ```
 
@@ -145,6 +165,42 @@ interface PiCodemodeGuardDetails {
 Read it with `readPiCodemodeGuardDetails(details)`. The shape is versioned and
 additive-only; consumers must fall back to the inline content for versions they
 do not understand.
+
+## FAQ
+
+### What is codemode in pi?
+
+`codemode` is pi's tool for writing one JavaScript script that calls pi's other
+tools in a single step. The script runs as the body of an async function inside
+a QuickJS sandbox (no Node, filesystem, network, or timers); only its output is
+returned to the model. Correct input is exactly `{ code: <raw JavaScript> }`.
+
+### Why does my codemode call return an empty `{}`?
+
+Because the script contained an un-awaited promise (typically
+`searchTools(...)` or a `models.*` call). The pending promise is
+JSON-serialized as `{}`, so the tool silently returns nothing. The
+`await-async-calls` pass inserts the missing `await` automatically.
+
+### What model mistakes does pi-codemode-guard fix?
+
+Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
+`source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
+IIFE wrappers, missing `await` on async helpers, `tools["a-b"](...)` indexing,
+and OpenCode-dialect tool paths — each an independent, idempotent compile pass.
+
+### Can a guard bug break my script?
+
+No. Every pass is best-effort: a script that does not parse is returned
+unchanged with a warning instead of throwing, and each pass can be skipped
+independently. `compile(compile(x)) === compile(x)` is guaranteed by the test
+suite.
+
+### Does it replace pi's built-in codemode tool?
+
+It re-registers the canonical `createCodemodeExtension()` factory through a
+small proxy, keeping the original schema, `models`, `store()` persistence, and
+`codemode.mode` — so it coexists with, rather than forks, the built-in tool.
 
 ## Development
 
