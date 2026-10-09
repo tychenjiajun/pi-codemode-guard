@@ -1,0 +1,56 @@
+{
+  "name": "pi-codemode-guard",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, and missing await on async helpers",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./compile": "./compile.ts",
+    "./compile.ts": "./compile.ts",
+    "./arguments": "./arguments.ts",
+    "./arguments.ts": "./arguments.ts",
+    "./contract": "./contract.ts",
+    "./contract.ts": "./contract.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "codemode",
+    "compiler",
+    "await",
+    "tool-guard"
+  ],
+  "author": "Jiajun Chen <tychenjiajun@gmail.com>",
+  "license": "MIT",
+  "files": [
+    "*.ts",
+    "!*.test.ts",
+    "README.md",
+    "CONTEXT.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.99.2",
+    "@earendil-works/pi-tui": ">=0.99.2"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.99.2",
+    "@earendil-works/pi-tui": "^0.99.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "acorn": "^8.15.0"
+  },
+  "packageManager": "pnpm@12.6.0"
+}
