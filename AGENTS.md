@@ -115,6 +115,7 @@ unwraps. `external_*` identifiers the script itself declares are left untouched.
 | Interop contract | `contract.ts` |
 | Pi extension docs | [pi docs](https://github.com/earendil-works/pi-coding-agent/docs) |
 | Pi codemode docs | `<pi package>/docs/codemode.md` |
+| Pi packages | [packages.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) |
 
 ## Commit Attribution
 AI commits MUST include:

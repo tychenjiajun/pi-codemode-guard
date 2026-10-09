@@ -2,8 +2,13 @@
 
 English | [简体中文](./README.zh-CN.md)
 
+<p align="center">
+  <img src="./assets/preview.svg" alt="pi-codemode-guard compiles LLM codemode scripts before they reach the QuickJS sandbox" width="880">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
+[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -169,22 +174,32 @@ identically to OpenCode (and warned about) so it at least parses.
 
 ## Install
 
-The extension is a pi package:
+`pi-codemode-guard` is a [Pi package](https://pi.dev/packages) (it carries the
+`pi-package` keyword, so it is eligible for the package gallery). Install it with
+the `pi` CLI and it registers the `codemode` tool itself:
 
 ```bash
-# straight from GitHub (recommended)
+# from npm (published package)
+pi install npm:pi-codemode-guard
+
+# from git (recommended until published)
 pi install git:github.com/tychenjiajun/pi-codemode-guard
 
-# or from a local checkout
+# from a local checkout
 pi install /path/to/pi-codemode-guard
 
-# or run it directly without installing
-pi -e /path/to/pi-codemode-guard/index.ts
+# try it for one session without saving it to settings
+pi -e /path/to/pi-codemode-guard
 ```
 
-It registers the `codemode` tool itself, so it works both with the CLI's
-built-in codemode extension (which it replaces) and in SDK sessions that add
-`createCodemodeExtension()`.
+`pi list` confirms it is loaded; `pi remove <source>` uninstalls it; `pi config`
+enables or disables individual resources. Personal installs are written to
+`~/.pi/agent/settings.json` — add `--local` (or `-l`) to write a project-scoped
+declaration to `.pi/settings.json` instead (loaded only after project trust is
+granted).
+
+It works both with the CLI's built-in codemode extension (which it replaces) and
+in SDK sessions that add `createCodemodeExtension()`.
 
 ## How it stays compatible
 

@@ -2,8 +2,13 @@
 
 [English](./README.md) | 简体中文
 
+<p align="center">
+  <img src="./assets/preview.svg" alt="pi-codemode-guard 在脚本进入 QuickJS 沙箱之前编译 LLM 写的 codemode 脚本" width="880">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
+[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -65,6 +70,8 @@ const x = searchTools(...) →  const x = await searchTools(...)
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
+| `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
+| `tanstack-dialect` | `external_getWeather({…})` | `tools.getWeather({…})` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -75,10 +82,11 @@ const x = searchTools(...) →  const x = await searchTools(...)
 
 编译器会检测脚本使用的是哪种 codemode 方言，并将其翻译为 Pi。
 
-`detectCodemodeDialect(code)` 返回 `pi`、`opencode`、`cloudflare` 或 `unknown`，并附带命中的信号。
+`detectCodemodeDialect(code)` 返回 `pi`、`opencode`、`cloudflare`、`tanstack` 或 `unknown`，并附带命中的信号。
 OpenCode 独有信号包括 `$codemode`、`tools.<ns>.<tool>` 路径（Pi 的工具永远是单层的），
 以及 `Object.keys(tools)`。Cloudflare 信号包括 `codemode.<tool>` / `codemode.search`
-平台调用，以及裸的 `async () => { … }` 程序包装。
+平台调用，以及裸的 `async () => { … }` 程序包装。TanStack 信号是裸的
+`external_<tool>` 绑定引用（绝不会是 `tools.external_<tool>` 成员访问）。
 
 当方言为 `opencode` 时，`compileOpencodeDialect` 会在 await pass 之前运行：
 
@@ -123,6 +131,20 @@ Cloudflare 的工具命名规则（`sanitizeToolName`）与 Pi 的 `toCodemodeId
 provider 不会被改动（后者在提供了目录时会给出警告）；位置参数的 provider
 调用（`state.readFile("/path")`）原样保留，因为编译器无从得知 Pi 的参数名。
 
+当方言为 `tanstack` 时，会翻译 [`@tanstack/ai-code-mode`](https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
+程序。源码是 TypeScript，因此 `tanstack-typescript` 先运行（`unwrap-iife` 在其后运行，
+以防模型把代码包了一层），随后 `compileTanstackDialect` 改写绑定：
+
+| TanStack AI code mode | Pi codemode |
+|---|---|
+| `{ typescriptCode: "…" }` | `{ code: "…" }`（经 `typescriptCode` 参数别名） |
+| `external_getWeather({…})` | `tools.getWeather({…})` —— 对照实时工具目录解析 |
+| 带 `my-tool` 工具的 `external_my_tool({…})` | `tools.my_tool({…})`（Pi 的 `toCodemodeIdentifier` 规则） |
+| `return value`、`console.log`、`Promise.all`、顶层 `await` | 本身就是合法 Pi —— 原样保留 |
+
+绑定前缀被剥离后，其余部分通过 Pi 的目录解析，方式与 OpenCode 命名空间路径完全相同；
+无法解析的绑定会被确定性地展平（与 OpenCode 一致，并给出警告），至少保证它能解析通过。
+
 ### 它刻意不动的东西
 
 - 被当作字符串数组使用的 `ALL_TOOLS`（语义有歧义）。
@@ -133,20 +155,28 @@ provider 不会被改动（后者在提供了目录时会给出警告）；位�
 
 ## 安装
 
-本扩展是一个 pi 包：
+`pi-codemode-guard` 是一个 [Pi 包](https://pi.dev/packages)（带 `pi-package` 关键字，
+因此有资格进入包展示廊）。用 `pi` CLI 安装，它会自行注册 `codemode` 工具：
 
 ```bash
-# 直接从 GitHub 安装（推荐）
+# 从 npm 安装（已发布的包）
+pi install npm:pi-codemode-guard
+
+# 从 git 安装（发布前的推荐方式）
 pi install git:github.com/tychenjiajun/pi-codemode-guard
 
-# 或从本地检出安装
+# 从本地检出安装
 pi install /path/to/pi-codemode-guard
 
-# 或不安装直接运行
-pi -e /path/to/pi-codemode-guard/index.ts
+# 仅本次会话试用，不写入设置
+pi -e /path/to/pi-codemode-guard
 ```
 
-它自己注册 `codemode` 工具，因此既适用于 CLI 内置的 codemode 扩展（会被它替换），
+`pi list` 确认它已加载；`pi remove <source>` 卸载它；`pi config` 启用或禁用单个资源。
+个人级安装写入 `~/.pi/agent/settings.json` —— 加 `--local`（或 `-l`）则改为把项目级
+声明写入 `.pi/settings.json`（仅在项目信任通过后才会加载）。
+
+它既适用于 CLI 内置的 codemode 扩展（会被它替换），
 也适用于自行添加 `createCodemodeExtension()` 的 SDK 会话。
 
 ## 如何保持兼容
@@ -168,7 +198,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // 沙箱收到的源码
   passes: string[];     // 例如 ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "cloudflare" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "unknown";
   warnings: string[];
 }
 ```
@@ -195,7 +225,7 @@ interface PiCodemodeGuardDetails {
 markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`source`、
 `javascript`、…）、宽松的 `/* @options: … */` 行、多余的 async IIFE 包装、
 异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode / Cloudflare
-方言的工具路径与命名空间 —— 每一项都是独立、幂等的编译 pass。
+/ TanStack AI code mode 方言的工具路径与命名空间 —— 每一项都是独立、幂等的编译 pass。
 
 ### 本扩展的 bug 会弄坏我的脚本吗？
 
@@ -213,7 +243,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 130 个单元测试
+pnpm test        # 152 个单元测试
 pnpm typecheck
 ```
 
