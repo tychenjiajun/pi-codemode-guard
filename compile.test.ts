@@ -148,6 +148,112 @@ describe("compileCodemodeSource", () => {
     expect(twice.code).toBe(once.code);
   });
 
+  it("compiles the Vercel AI SDK code mode dialect", () => {
+    const source = [
+      "interface Weather { temp: number }",
+      'const w: Weather = await tools["get-weather"]({ location: "London" });',
+      "return w;",
+    ].join("\n");
+    const result = compileCodemodeSource(source, { tools: ["get-weather"] });
+    expect(result.dialect).toBe("vercel");
+    expect(result.passes).toContain("vercel-typescript");
+    expect(result.passes).toContain("vercel-dialect(1)");
+    expect(result.code).not.toContain("interface");
+    expect(result.code).not.toContain(": Weather");
+    expect(result.code).not.toContain('tools["');
+    expect(result.code).toContain('await tools.get_weather({ location: "London" });');
+  });
+
+  it("strips TypeScript around an optional-chained Vercel call", () => {
+    const result = compileCodemodeSource(
+      'interface Q { q: string }\nconst r: Q = await tools?.["web-search"]({ q: "pi" });\nreturn r;',
+      { tools: ["web-search"] },
+    );
+    expect(result.dialect).toBe("vercel");
+    expect(result.passes).toContain("vercel-typescript");
+    expect(result.code).toContain('await tools?.web_search({ q: "pi" })');
+    expect(result.code).not.toContain("interface");
+  });
+
+  it("awaits a Vercel tool call that forgot the await", () => {
+    const result = compileCodemodeSource(
+      'const w: unknown = tools["get-weather"]({ location: "London" });\ntext(w);',
+      { tools: ["get-weather"] },
+    );
+    expect(result.dialect).toBe("vercel");
+    expect(result.passes).toContain("vercel-typescript");
+    expect(result.code).toContain('const w = await tools.get_weather({ location: "London" });');
+    expect(result.passes).toContain("await-async-calls(1)");
+  });
+
+  it("does not run the Vercel pass on Pi code", () => {
+    const result = compileCodemodeSource('const hits = await searchTools("x");\nreturn hits;');
+    expect(result.dialect).toBe("pi");
+    expect(result.passes.some((pass) => pass.startsWith("vercel"))).toBe(false);
+  });
+
+  it("compiles Vercel TypeScript idempotently", () => {
+    const once = compileCodemodeSource('const n: number = 1;\nreturn tools["lookup-user"]({ id: n });', {
+      tools: ["lookup-user"],
+    });
+    const twice = compileCodemodeSource(once.code, { tools: ["lookup-user"] });
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("compiles the DeepSeek Harness PTC dialect", () => {
+    const source = [
+      "interface Weather { temp: number }",
+      "const names = Object.keys(tools);",
+      'const w: Weather = await tools["get-weather"]({ location: "London" });',
+      "return { names, w };",
+    ].join("\n");
+    const result = compileCodemodeSource(source, { tools: ["get-weather"] });
+    expect(result.dialect).toBe("ptc");
+    expect(result.passes).toContain("ptc-typescript");
+    expect(result.passes).toContain("ptc-dialect(2)");
+    expect(result.code).toContain('await tools.get_weather({ location: "London" })');
+    expect(result.code).toContain("ALL_TOOLS.map((__ptc_tool) => __ptc_tool.name)");
+    expect(result.code).not.toContain("interface");
+    expect(result.code).not.toContain(": Weather");
+  });
+
+  it("compiles PTC TypeScript idempotently", () => {
+    const source = [
+      "interface Weather { temp: number }",
+      "const names = Object.keys(tools);",
+      'const w: Weather = await tools["get-weather"]({ location: "London" });',
+      "return { names, w };",
+    ].join("\n");
+    const once = compileCodemodeSource(source, { tools: ["get-weather"] });
+    const twice = compileCodemodeSource(once.code, { tools: ["get-weather"] });
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("does not run the PTC pass on Pi code", () => {
+    const result = compileCodemodeSource('const hits = await searchTools("x");\nreturn hits;');
+    expect(result.dialect).toBe("pi");
+    expect(result.passes.some((pass) => pass.startsWith("ptc-"))).toBe(false);
+  });
+
+  it("surfaces PTC-only feature warnings through compileCodemodeSource", () => {
+    const source = [
+      'const fs = await import("node:fs");',
+      "try {",
+      '  const w = await tools["get-weather"]({ location: "London" });',
+      "  return w;",
+      "} catch (e) {",
+      "  if (e instanceof ToolCallError) return String(e);",
+      "  throw e;",
+      "}",
+    ].join("\n");
+    const result = compileCodemodeSource(source, { tools: ["get-weather"] });
+    expect(result.dialect).toBe("ptc");
+    expect(result.warnings.some((warning) => warning.includes("ToolCallError"))).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes("import()"))).toBe(true);
+  });
+
   it("awaits a Cloudflare search shim that forgot the await", () => {
     const result = compileCodemodeSource('const m = codemode.search("x");\ntext(m);', { tools: [] });
     expect(result.dialect).toBe("cloudflare");

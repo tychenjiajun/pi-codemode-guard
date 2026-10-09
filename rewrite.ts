@@ -12,6 +12,7 @@
 //
 //   tools.mcp__dev_radius__search({ query: "x" })
 
+import { collectBoundNames } from "./catalog.ts";
 import { isIdentifierName, toCodemodeIdentifier } from "./identifiers.ts";
 import { childNodes, parseScript, type AstNode } from "./parse.ts";
 
@@ -34,6 +35,7 @@ export function rewriteToolIdentifiers(code: string): IdentifierRewriteResult | 
   const ast = parseScript(code);
   if (!ast) return undefined;
 
+  const bound = collectBoundNames(ast);
   const replacements: Replacement[] = [];
 
   const visit = (node: AstNode): void => {
@@ -43,12 +45,15 @@ export function rewriteToolIdentifiers(code: string): IdentifierRewriteResult | 
       if (
         object.type === "Identifier" &&
         REWRITE_OBJECTS.has(object.name as string) &&
+        !bound.has(object.name as string) &&
         property.type === "Literal" &&
         typeof property.value === "string"
       ) {
         const identifier = toCodemodeIdentifier(property.value);
         if (isIdentifierName(identifier)) {
-          const text = `${object.name as string}.${identifier}`;
+          // Preserve `tools?.["x"]` as `tools?.x` rather than dropping the guard.
+          const accessor = node.optional === true ? "?." : ".";
+          const text = `${object.name as string}${accessor}${identifier}`;
           if (code.slice(node.start, node.end) !== text) {
             replacements.push({ start: node.start, end: node.end, text });
           }

@@ -34,6 +34,14 @@ describe("coerceCodemodeArguments", () => {
     expect(coerceCodemodeArguments({ typescript_code: "return 1;" }).code).toBe("return 1;");
   });
 
+  it("accepts the Vercel js field", () => {
+    expect(coerceCodemodeArguments({ js: "return 1;" })).toEqual({
+      code: "return 1;",
+      kind: "alias-field",
+      field: "js",
+    });
+  });
+
   it("unwraps a nested source object", () => {
     expect(coerceCodemodeArguments({ code: { language: "javascript", content: "return 1;" } })).toEqual({
       code: "return 1;",

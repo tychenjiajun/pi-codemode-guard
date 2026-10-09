@@ -53,7 +53,7 @@ text(`${a.length} + ${b.length} bytes`);
 | `(async () => { … })();` | redundant wrapper; unawaited it may never run | `unwrap-iife` |
 | `const hits = searchTools("x");` | promise serialized as `{}` (pi issue #10555) | `await-async-calls` |
 | `const r = tools.bash({ command: "ls" });` | unawaited promise, results never used | `await-async-calls` |
-| `tools["mcp__dev-radius__search"]({…})` | bracket access with the raw name, or a syntax error for `-` | `rewrite-tool-identifiers` |
+| `tools["mcp__dev-radius__search"]({…})` | bracket access with the raw name, or a syntax error for `-` | `rewrite-tool-identifiers` (and `vercel-dialect` for Vercel source) |
 
 The three observed real-world failures this extension exists for:
 
@@ -138,6 +138,75 @@ JavaScript. Pi's sandbox is QuickJS running plain JavaScript, so the guard:
 The catalog mapping and fallback (exact → fuzzy `normalizeToolKey` → flatten +
 `warning`) are the same ones `resolveToolPath` uses for OpenCode.
 
+## Vercel AI SDK code mode dialect (`@ai-sdk/code-mode`, https://github.com/vercel/ai/tree/main/packages/code-mode)
+
+Vercel's `@ai-sdk/code-mode` (vercel/ai, packages/code-mode) does **not** share
+the `{ code }` envelope: the program arrives as `{ js: "…" }` (`js` is already
+accepted as an argument alias) and runs as the body of an async function, so
+top-level `await`/`return` work. The source is TypeScript and raw tool names
+that are not valid JS identifiers keep bracket access. Pi's sandbox is QuickJS
+running plain JavaScript with flat `tools.<identifier>` names, so the guard:
+
+| Vercel AI code mode | Pi |
+|---|---|
+| `{ js: "…" }` | `{ code: "…" }` |
+| `await tools["web-search"]({ q })` | `await tools.web_search({ q })` |
+| `const c: string = "London";` | `const c = "London";` |
+| `tools.getWeather({ location })` | `tools.getWeather({ location })` (unchanged) |
+
+`vercel-typescript` strips the TypeScript syntax (interfaces, annotations,
+`satisfies`) via sucrase **before** `unwrap-iife` runs, then
+`compileVercelDialect(code, { tools })` maps `tools["raw-name"]` to
+`tools.<identifier>` using Pi's live catalog. Unresolved names are flattened
+deterministically and reported in `warnings`, using the same exact → fuzzy
+`normalizeToolKey` → flatten fallback as OpenCode. There are no
+`searchTools` / `ALL_TOOLS` / `codemode.*` helpers in this dialect — tool
+discovery is embedded in the tool description — so nothing is shimmed.
+
+**Detection.** `detectCodemodeDialect` reports `vercel:tools.<name>` when the
+source is TypeScript (acorn cannot parse it), references `tools`, and carries no
+OpenCode/TanStack/Cloudflare signal. TanStack (`external_`) and OpenCode
+(`$codemode` / nested `tools.<ns>.<tool>`) signals are checked first and take
+priority.
+
+## DeepSeek Harness PTC dialect (`@deepseek-ai/dsh-ptc-runtime-node`)
+
+DeepSeek's harness PTC mode (`deepseek-ai/deepseek-harness`,
+packages/ptc-runtime/ptc-runtime-node) exposes a `run_code({ description, code })`
+tool. Pi's codemode tool takes `{ code }`, so the extra `description` field is
+dropped by the argument-normalization shim. `code` is the body of an async
+TypeScript function (erasable TypeScript only), so top-level `await`/`return`
+work. Host functions are exposed as a global `tools` object whose function
+names are arbitrary strings; `console.log(...)` and `return` are PTC's output
+channels and are Pi-compatible.
+
+| DeepSeek PTC | Pi codemode |
+|---|---|
+| `{ code, description }` | `{ code }` (description dropped) |
+| `await tools["web-search"]({ q })` | `await tools.web_search({ q })` — resolved against the live catalog |
+| `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
+| `const c: string = "London";` | `const c = "London";` — TypeScript stripped via sucrase |
+| `ToolCallError` | no equivalent — a warning is emitted |
+| `await import("node:fs")` | unavailable in Pi — a warning is emitted |
+
+Model-written calls use `await tools.name(args)`, with quoted access
+`tools["my-tool"](args)` for exotic names, whereas Pi uses `tools.<identifier>`
+with every invalid character replaced by `_` —
+`compilePtcDialect(code, { tools })` (see `ptc.ts`) rewrites them against the
+live catalog. Failed tool calls in PTC reject with `ToolCallError` (a PTC-only
+global with `.toolName`); Pi has no equivalent (a failed call rejects with a
+plain `Error`). PTC reaches Node APIs with `await import(...)`, while Pi's
+QuickJS sandbox has no `import`, `fetch`, or Node APIs. The pipeline runs
+`ptc-typescript` (sucrase) **before** `unwrap-iife`, then `ptc-dialect(N)`.
+
+**Detection.** `detectCodemodeDialect` reports PTC from `ptc:ToolCallError`,
+`ptc:import()`, and — only when acorn cannot parse the TypeScript —
+`ptc:Object.keys(tools)`. OpenCode's structural signals (`$codemode`, nested
+`tools.<ns>.<tool>`), TanStack, and Cloudflare take priority; PTC's own signals
+outrank the generic `Object.keys(tools)` shape that OpenCode also uses. Vercel
+remains the generic TypeScript fallback, so a PTC program with none of these
+signals is still compiled correctly as `vercel`.
+
 ## Pipeline (high level)
 
 ```
@@ -156,13 +225,17 @@ tool_call event (index.ts)
     1 strip-code-fence
     2 normalize-options-line
     3 compile-json-program
-    4 unwrap-iife
-    5 opencode-dialect      (only when the dialect is opencode)
-    6 cloudflare-dialect    (only when the dialect is cloudflare)
-    7 tanstack-typescript   (only when the dialect is tanstack: strip TypeScript syntax)
-    8 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
-    9 await-async-calls
-   10 rewrite-tool-identifiers
+    4 tanstack-typescript   (only when the dialect is tanstack: strip TypeScript syntax)
+    5 vercel-typescript     (only when the dialect is vercel: strip TypeScript syntax)
+    6 ptc-typescript        (only when the dialect is ptc: strip TypeScript syntax)
+    7 unwrap-iife
+    8 opencode-dialect      (only when the dialect is opencode)
+    9 cloudflare-dialect    (only when the dialect is cloudflare)
+   10 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
+   11 vercel-dialect        (only when the dialect is vercel: tools["raw-name"] -> tools.<identifier>)
+   12 ptc-dialect           (only when the dialect is ptc: raw tool names -> tools.<identifier>, Object.keys(tools) -> ALL_TOOLS)
+   13 await-async-calls
+   14 rewrite-tool-identifiers
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -192,11 +265,15 @@ tool_result event → details.piCodemodeGuard + compile receipt
 - **tool_call event** — pi event fired after validation; `event.input` is
   mutable and is not re-validated.
 - **pass** — one best-effort compiler transformation, identified in `passes`.
-- **dialect** — `pi`, `opencode`, `cloudflare`, `tanstack`, or `unknown`; OpenCode is the
+- **dialect** — `pi`, `opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, or `unknown`; OpenCode is the
   `@opencode-ai/codemode` program API (nested tool paths, `$codemode.search`),
   Cloudflare is the `@cloudflare/codemode` API (`codemode.*`, named providers,
   bare `async () => { … }` wrapper), TanStack is `@tanstack/ai-code-mode`
-  (`external_<tool>` bindings in TypeScript source).
+  (`external_<tool>` bindings in TypeScript source), Vercel is
+  `@ai-sdk/code-mode` (`{ js }` envelope, TypeScript source, bracket access
+  `tools["raw-name"]`), DeepSeek Harness PTC is
+  `@deepseek-ai/dsh-ptc-runtime-node` (`run_code({ description, code })`,
+  global `tools` with arbitrary raw names, TypeScript source).
 - **catalog** — the Pi tool names (`pi.getAllTools()`), needed to collapse an
   OpenCode namespace path to Pi's flat identifier.
 - **guard details** — `details.piCodemodeGuard`, the versioned record of what

@@ -101,7 +101,12 @@ export function createGuardedCodemodeApi(pi: ExtensionAPI): ExtensionAPI {
 
 function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
   const summary = result.passes.length > 0 ? result.passes.join(", ") : result.warnings.join("; ");
-  const translated = result.dialect === "opencode" || result.dialect === "cloudflare" || result.dialect === "tanstack";
+  const translated =
+    result.dialect === "opencode" ||
+    result.dialect === "cloudflare" ||
+    result.dialect === "tanstack" ||
+    result.dialect === "vercel" ||
+    result.dialect === "ptc";
   const dialect = translated ? `${result.dialect} → pi` : result.dialect;
   showGuardStatus(ctx, `🛡 ${dialect} · ${summary}`);
   if (ctx.hasUI) {

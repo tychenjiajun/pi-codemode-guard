@@ -10,7 +10,7 @@ English | [简体中文](./README.zh-CN.md)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-152%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-206%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
@@ -18,8 +18,9 @@ English | [简体中文](./README.zh-CN.md)
 LLM-written `codemode` scripts before they reach the sandbox**. It inserts
 missing `await`, strips markdown fences, converts JSON tool-call programs into
 real JavaScript, normalizes `@options:` lines, unwraps async IIFEs, and
-translates the OpenCode and Cloudflare agents dialects — so AI-generated agent
-scripts run instead of silently failing.
+translates the OpenCode, Cloudflare agents, TanStack AI, Vercel AI SDK, and
+DeepSeek Harness PTC code mode dialects — so AI-generated agent scripts run
+instead of silently failing.
 
 In one sentence: *a best-effort, idempotent compiler that turns broken
 codemode tool calls from any LLM into the exact JavaScript pi's QuickJS sandbox
@@ -75,11 +76,15 @@ Two hooks, installed automatically:
 | `strip-code-fence` | ` ```js\nconst x = 1;\n``` ` | `const x = 1;` |
 | `normalize-options-line` | `/* @options: {'maxOutputTokens': 2000} */` | `// @options: {"max_output_tokens": 2000}` |
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
+| `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
+| `vercel-typescript` | `const c: string = "London";` | `const c = "London";` |
+| `ptc-typescript` | `let total: number = 0;` | `let total = 0;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
-| `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
 | `tanstack-dialect` | `external_getWeather({…})` | `tools.getWeather({…})` |
+| `vercel-dialect` | `await tools["web-search"]({ q })` | `await tools.web_search({ q })` |
+| `ptc-dialect` | `await tools["my-tool"]({ q })` | `await tools.my_tool({ q })` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -93,12 +98,21 @@ The compiler detects which codemode dialect a script is written in and
 translates it to Pi.
 
 `detectCodemodeDialect(code)` returns `pi`, `opencode`, `cloudflare`,
-`tanstack`, or `unknown` with the signals it found. OpenCode-exclusive signals are
+`tanstack`, `vercel`, `ptc`, or `unknown` with the signals it found. OpenCode-exclusive signals are
 `$codemode`, a `tools.<ns>.<tool>` path (Pi tools are always single-level), and
 `Object.keys(tools)`. Cloudflare signals are a `codemode.<tool>` / `codemode.search`
 platform call and the bare `async () => { … }` program wrapper. TanStack signals
 are a bare `external_<tool>` binding reference (never a `tools.external_<tool>`
-member access).
+member access). Vercel signals (`vercel:tools.<name>`) are TypeScript source
+(acorn cannot parse it) that references `tools` and carries no
+OpenCode/TanStack/Cloudflare signal — TanStack (`external_`) and OpenCode
+(`$codemode` / nested `tools.<ns>.<tool>`) take priority. DeepSeek Harness PTC
+signals are `ptc:ToolCallError` and `ptc:import()`, plus `ptc:Object.keys(tools)`
+only when acorn cannot parse the TypeScript; OpenCode's structural signals
+(`$codemode` / nested `tools.<ns>.<tool>`), TanStack, and Cloudflare take
+priority, but PTC's own signals outrank the generic `Object.keys(tools)` shape
+that OpenCode also uses. Vercel remains the generic TypeScript fallback, so a
+PTC program with none of these signals is still compiled correctly as `vercel`.
 
 When the dialect is `opencode`,
 [`@opencode-ai/codemode`](https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
@@ -163,6 +177,55 @@ The binding prefix is stripped and the rest resolved through Pi's catalog the
 same way OpenCode namespace paths are; an unresolvable binding is flattened
 identically to OpenCode (and warned about) so it at least parses.
 
+When the dialect is `vercel`, [`@ai-sdk/code-mode`](https://github.com/vercel/ai/tree/main/packages/code-mode)
+programs are translated. The envelope field is `{ js: "…" }` instead of Pi's
+`{ code }` (`js` is already accepted as an argument alias) and the program runs
+as the body of an async function (top-level `await`/`return` work). The code is
+TypeScript, so `vercel-typescript` runs before `unwrap-iife`, then
+`compileVercelDialect` rewrites the bracket access:
+
+| Vercel AI code mode | Pi codemode |
+|---|---|
+| `{ js: "…" }` | `{ code: "…" }` (via the `js` argument alias) |
+| `await tools["web-search"]({ q })` | `await tools.web_search({ q })` — resolved against the live catalog |
+| `const c: string = "London";` | `const c = "London";` — TypeScript stripped via sucrase |
+| `tools.getWeather({ location })` | `tools.getWeather({ location })` (unchanged) |
+
+Raw tool names that are not valid JS identifiers keep bracket access in Vercel;
+`compileVercelDialect` maps them to Pi's identifier against the live catalog,
+flattening (and warning about) any name it cannot resolve — the same fallback
+OpenCode uses. This dialect has no `searchTools` / `ALL_TOOLS` / `codemode.*`
+helpers; tool discovery is embedded in the tool description, so nothing is
+shimmed.
+
+When the dialect is `ptc`,
+[`@deepseek-ai/dsh-ptc-runtime-node`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/ptc-runtime/ptc-runtime-node)
+programs are translated. DeepSeek's PTC mode tool is
+`run_code({ description, code })` — the extra `description` is dropped by the
+argument-normalization shim, leaving Pi's `{ code }` — and `code` is the body
+of an async TypeScript function (erasable TypeScript only), so top-level
+`await`/`return` work. The code is TypeScript, so `ptc-typescript` runs before
+`unwrap-iife`, then `compilePtcDialect` rewrites the calls:
+
+| DeepSeek PTC | Pi codemode |
+|---|---|
+| `{ code, description }` | `{ code }` (description dropped) |
+| `await tools["web-search"]({ q })` | `await tools.web_search({ q })` — resolved against the live catalog |
+| `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
+| `const c: string = "London";` | `const c = "London";` — TypeScript stripped via sucrase |
+| `ToolCallError` | no equivalent — a warning is emitted |
+| `await import("node:fs")` | unavailable in Pi — a warning is emitted |
+
+Host functions are exposed as a global `tools` object whose names are
+arbitrary strings (the model writes `await tools.name(args)`, or quoted access
+`tools["my-tool"](args)` for exotic names); `compilePtcDialect` maps them to
+Pi's `tools.<identifier>` against the live catalog. `ToolCallError` (PTC's
+rejection for failed tool calls, carrying `.toolName`) and `await import(...)`
+(the way PTC reaches Node APIs) have no Pi equivalent — a failed Pi tool call
+rejects with a plain `Error`, and Pi's QuickJS sandbox has no `import`,
+`fetch`, or Node APIs — so both emit a warning. `console.log(...)` and
+`return` are PTC's output channels and are Pi-compatible.
+
 ### What it deliberately leaves alone
 
 - `ALL_TOOLS` used as if it were an array of strings (ambiguous semantics).
@@ -222,7 +285,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // what the sandbox received
   passes: string[];     // e.g. ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "unknown";
   warnings: string[];
 }
 ```
@@ -252,8 +315,9 @@ JSON-serialized as `{}`, so the tool silently returns nothing. The
 Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
 `source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
 IIFE wrappers, missing `await` on async helpers, `tools["a-b"](…)` indexing,
-and OpenCode / Cloudflare / TanStack AI code mode dialect tool paths and
-namespaces — each an independent, idempotent compile pass.
+and OpenCode / Cloudflare / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC
+code mode dialect tool
+paths and namespaces — each an independent, idempotent compile pass.
 
 ### Can a guard bug break my script?
 
@@ -272,7 +336,7 @@ small proxy, keeping the original schema, `models`, `store()` persistence, and
 
 ```bash
 pnpm install
-pnpm test        # 152 unit tests
+pnpm test        # 206 unit tests
 pnpm typecheck
 ```
 

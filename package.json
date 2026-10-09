@@ -2,7 +2,7 @@
   "name": "pi-codemode-guard",
   "version": "0.1.0",
   "type": "module",
-  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, missing await, and the OpenCode / Cloudflare agents / TanStack AI code mode dialects",
+  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, missing await, and the OpenCode / Cloudflare agents / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC code mode dialects",
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
@@ -19,7 +19,11 @@
     "./typescript": "./typescript.ts",
     "./typescript.ts": "./typescript.ts",
     "./dialect": "./dialect.ts",
-    "./dialect.ts": "./dialect.ts"
+    "./dialect.ts": "./dialect.ts",
+    "./vercel": "./vercel.ts",
+    "./vercel.ts": "./vercel.ts",
+    "./ptc": "./ptc.ts",
+    "./ptc.ts": "./ptc.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -40,6 +44,10 @@
     "opencode",
     "cloudflare",
     "tanstack",
+    "vercel",
+    "deepseek",
+    "ptc",
+    "ai-sdk",
     "dialect",
     "quickjs",
     "typescript"

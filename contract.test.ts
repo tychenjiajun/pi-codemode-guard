@@ -45,6 +45,14 @@ describe("readPiCodemodeGuardDetails", () => {
       [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "tanstack" },
     });
     expect(tanstack?.dialect).toBe("tanstack");
+    const vercel = readPiCodemodeGuardDetails({
+      [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "vercel" },
+    });
+    expect(vercel?.dialect).toBe("vercel");
+    const ptc = readPiCodemodeGuardDetails({
+      [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "ptc" },
+    });
+    expect(ptc?.dialect).toBe("ptc");
   });
 
   it("returns undefined when a field has the wrong type", () => {

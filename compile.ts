@@ -9,13 +9,17 @@
 //   1. strip-code-fence          — remove ``` / ~~~ wrappers and surrounding prose
 //   2. normalize-options-line    — rewrite the first `// @options:` line to strict JSON
 //   3. compile-json-program      — turn JSON tool calls into `await tools.*` calls
-//   4. unwrap-iife               — drop a redundant async IIFE wrapper
-//   5. opencode-dialect          — translate OpenCode codemode paths/search to Pi
-//   6. cloudflare-dialect        — translate Cloudflare agents codemode namespaces to Pi
-//   7. tanstack-typescript       — strip TypeScript syntax (TanStack code mode)
-//   8. tanstack-dialect          — translate TanStack `external_<tool>` bindings to Pi
-//   9. await-async-calls         — add the `await` models forget (pi issue #10555)
-//  10. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
+//   4. tanstack-typescript       — strip TypeScript syntax (TanStack code mode)
+//   5. vercel-typescript         — strip TypeScript syntax (Vercel AI SDK code mode)
+//   6. ptc-typescript            — strip TypeScript syntax (DeepSeek Harness PTC)
+//   7. unwrap-iife               — drop a redundant async IIFE wrapper
+//   8. opencode-dialect          — translate OpenCode codemode paths/search to Pi
+//   9. cloudflare-dialect        — translate Cloudflare agents codemode namespaces to Pi
+//  10. tanstack-dialect          — translate TanStack `external_<tool>` bindings to Pi
+//  11. vercel-dialect            — translate Vercel `tools["<raw-name>"]` access to Pi
+//  12. ptc-dialect               — translate DeepSeek Harness PTC `tools["<raw-name>"]` / `Object.keys(tools)` to Pi
+//  13. await-async-calls         — add the `await` models forget (pi issue #10555)
+//  14. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
 //
 // A pass that would need a parse is skipped when the script does not parse, so
 // a guard bug can never corrupt a script beyond what lexical passes already did.
@@ -27,16 +31,18 @@ import { stripCodeFences } from "./fences.ts";
 import { unwrapIIFE } from "./iife.ts";
 import { splitOptionsLine } from "./options.ts";
 import { compileOpencodeDialect } from "./opencode.ts";
+import { compilePtcDialect } from "./ptc.ts";
 import { looksLikeToolProgram, programToJs } from "./program.ts";
 import { rewriteToolIdentifiers } from "./rewrite.ts";
 import { compileTanstackDialect } from "./tanstack.ts";
 import { stripTypeScriptSyntax } from "./typescript.ts";
+import { compileVercelDialect } from "./vercel.ts";
 
 export interface CompileOptions {
   /**
    * Pi tool names, from `pi.getAllTools()`. Used to resolve OpenCode namespace
-   * paths (`tools.orders.lookup`) and TanStack bindings (`external_getWeather`)
-   * to Pi's flat identifiers.
+   * paths (`tools.orders.lookup`), TanStack bindings (`external_getWeather`),
+   * and Vercel/PTC raw names (`tools["web-search"]`) to Pi's flat identifiers.
    */
   readonly tools?: readonly string[];
 }
@@ -114,6 +120,20 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
         body = stripped.code;
         passes.push("tanstack-typescript");
       }
+    } else if (dialect === "vercel") {
+      const stripped = stripTypeScriptSyntax(body);
+      warnings.push(...stripped.warnings);
+      if (stripped.changed) {
+        body = stripped.code;
+        passes.push("vercel-typescript");
+      }
+    } else if (dialect === "ptc") {
+      const stripped = stripTypeScriptSyntax(body);
+      warnings.push(...stripped.warnings);
+      if (stripped.changed) {
+        body = stripped.code;
+        passes.push("ptc-typescript");
+      }
     }
 
     const iife = unwrapIIFE(body);
@@ -142,6 +162,20 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
       if (tanstack.changed) {
         body = tanstack.code;
         passes.push(`tanstack-dialect(${tanstack.rewrites})`);
+      }
+    } else if (dialect === "vercel") {
+      const vercel = compileVercelDialect(body, options);
+      warnings.push(...vercel.warnings);
+      if (vercel.changed) {
+        body = vercel.code;
+        passes.push(`vercel-dialect(${vercel.rewrites})`);
+      }
+    } else if (dialect === "ptc") {
+      const ptc = compilePtcDialect(body, options);
+      warnings.push(...ptc.warnings);
+      if (ptc.changed) {
+        body = ptc.code;
+        passes.push(`ptc-dialect(${ptc.rewrites})`);
       }
     }
 

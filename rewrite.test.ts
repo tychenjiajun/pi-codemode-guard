@@ -29,6 +29,17 @@ describe("rewriteToolIdentifiers", () => {
     expect(rewriteToolIdentifiers(code)?.changed).toBe(false);
   });
 
+  it("does not rewrite when the object is locally bound", () => {
+    const code = 'const tools = { "my-key": 1 };\nlog(tools["my-key"]);';
+    expect(rewriteToolIdentifiers(code)?.changed).toBe(false);
+  });
+
+  it("preserves optional chaining", () => {
+    expect(rewriteToolIdentifiers('tools?.["mcp__dev-radius__search"]({});')?.code).toBe(
+      "tools?.mcp__dev_radius__search({});",
+    );
+  });
+
   it("returns undefined when the script does not parse", () => {
     expect(rewriteToolIdentifiers("const = ;")).toBeUndefined();
   });

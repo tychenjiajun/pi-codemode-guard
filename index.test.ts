@@ -252,6 +252,53 @@ describe("codemodeGuardExtension", () => {
     expect(guard?.passes).toContain("await-async-calls(1)");
   });
 
+  it("compiles a PTC-dialect call through the extension", async () => {
+    const mock = mockPi();
+    codemodeGuardExtension(mock.pi);
+    const notifications: string[] = [];
+    const ctx = {
+      hasUI: true,
+      mode: "print",
+      ui: { notify: (message: string) => notifications.push(message), setStatus: () => {} },
+    } as unknown as ExtensionContext;
+    const event: Record<string, unknown> = {
+      type: "tool_call",
+      toolName: "codemode",
+      toolCallId: "ptc1",
+      input: {
+        code: [
+          "interface Weather { temp: number }",
+          "const names = Object.keys(tools);",
+          'const w: Weather = await tools["get-weather"]({ location: "London" });',
+          "return { names, w };",
+        ].join("\n"),
+      },
+    };
+    await firstHandler(mock, "tool_call")(event, ctx);
+    const code = (event.input as { code: string }).code;
+    expect(code).toContain("await tools.get_weather");
+    expect(code).toContain("ALL_TOOLS.map((__ptc_tool) => __ptc_tool.name)");
+    expect(code).not.toContain("interface");
+
+    const result = (await firstHandler(mock, "tool_result")(
+      {
+        type: "tool_result",
+        toolName: "codemode",
+        toolCallId: "ptc1",
+        input: {},
+        content: [],
+        isError: false,
+        details: {},
+      },
+      ctx,
+    )) as { details?: unknown };
+    const guard = readPiCodemodeGuardDetails(result.details);
+    expect(guard?.dialect).toBe("ptc");
+    expect(guard?.passes).toContain("ptc-typescript");
+    expect(guard?.passes).toContain("ptc-dialect(2)");
+    expect(notifications.some((message) => message.includes("ptc → pi"))).toBe(true);
+  });
+
   it("stamps a warning-only Cloudflare result", async () => {
     const mock = mockPi();
     codemodeGuardExtension(mock.pi);
