@@ -177,6 +177,72 @@ describe("codemodeGuardExtension", () => {
     expect(readPiCodemodeGuardDetails(result.details)?.dialect).toBe("opencode");
   });
 
+  it("compiles a Cloudflare-dialect call to Pi syntax", async () => {
+    const mock = mockPi();
+    codemodeGuardExtension(mock.pi);
+    const ctx = mockContext();
+
+    const event: Record<string, unknown> = {
+      type: "tool_call",
+      toolName: "codemode",
+      toolCallId: "cf1",
+      input: {
+        code: 'async () => {\n  const o = await codemode.lookupOrder({ id: "1" });\n  return o;\n}',
+      },
+    };
+    await firstHandler(mock, "tool_call")(event, ctx);
+    const code = (event.input as { code: string }).code;
+    expect(code).toContain("tools.lookupOrder");
+    expect(code).not.toContain("codemode.");
+
+    const result = (await firstHandler(mock, "tool_result")(
+      {
+        type: "tool_result",
+        toolName: "codemode",
+        toolCallId: "cf1",
+        input: {},
+        content: [],
+        isError: false,
+        details: {},
+      },
+      ctx,
+    )) as { details?: unknown };
+
+    expect(readPiCodemodeGuardDetails(result.details)?.dialect).toBe("cloudflare");
+  });
+
+  it("stamps a warning-only Cloudflare result", async () => {
+    const mock = mockPi();
+    codemodeGuardExtension(mock.pi);
+    const ctx = mockContext();
+
+    await firstHandler(mock, "tool_call")(
+      {
+        type: "tool_call",
+        toolName: "codemode",
+        toolCallId: "cf2",
+        input: { code: 'await codemode.run("saved");' },
+      },
+      ctx,
+    );
+    const result = (await firstHandler(mock, "tool_result")(
+      {
+        type: "tool_result",
+        toolName: "codemode",
+        toolCallId: "cf2",
+        input: {},
+        content: [],
+        isError: false,
+        details: {},
+      },
+      ctx,
+    )) as { details?: unknown };
+
+    const guard = readPiCodemodeGuardDetails(result.details);
+    expect(guard?.dialect).toBe("cloudflare");
+    expect(guard?.warnings.some((warning) => warning.includes("codemode.run"))).toBe(true);
+  });
+
   it("does not stamp details when no compilation happened", async () => {
     const mock = mockPi();
     codemodeGuardExtension(mock.pi);

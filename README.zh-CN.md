@@ -5,14 +5,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** 是一个开源（MIT 协议）、TypeScript 编写的
 [pi](https://github.com/earendil-works/pi) AI 编程智能体扩展，用于**在脚本进入沙箱之前
 修复 LLM 编写的 `codemode` 脚本**。它会补上缺失的 `await`、剥掉 markdown 代码围栏、把
 JSON 工具调用程序转换成真正的 JavaScript、规范化 `@options:` 行、拆掉多余的 async IIFE，
-并翻译 OpenCode 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
+并翻译 OpenCode 与 Cloudflare agents 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
 
 一句话概括：*一个尽力而为、幂等的编译器，把任意 LLM 写坏的 codemode 工具调用转换成
 pi 的 QuickJS 沙箱所期望的确切 JavaScript —— 且完全不 fork codemode 的实现。*
@@ -64,6 +64,7 @@ const x = searchTools(...) →  const x = await searchTools(...)
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
+| `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -72,11 +73,12 @@ const x = searchTools(...) →  const x = await searchTools(...)
 
 ## 方言
 
-编译器会检测脚本使用的是哪种 codemode 方言，并在 OpenCode 方言时将其翻译为 Pi。
+编译器会检测脚本使用的是哪种 codemode 方言，并将其翻译为 Pi。
 
-`detectCodemodeDialect(code)` 返回 `pi`、`opencode` 或 `unknown`，并附带命中的信号。
+`detectCodemodeDialect(code)` 返回 `pi`、`opencode`、`cloudflare` 或 `unknown`，并附带命中的信号。
 OpenCode 独有信号包括 `$codemode`、`tools.<ns>.<tool>` 路径（Pi 的工具永远是单层的），
-以及 `Object.keys(tools)`。
+以及 `Object.keys(tools)`。Cloudflare 信号包括 `codemode.<tool>` / `codemode.search`
+平台调用，以及裸的 `async () => { … }` 程序包装。
 
 当方言为 `opencode` 时，`compileOpencodeDialect` 会在 await pass 之前运行：
 
@@ -98,6 +100,28 @@ OpenCode 独有信号包括 `$codemode`、`tools.<ns>.<tool>` 路径（Pi 的工
 `console.log` 映射为 Pi 的 `<console_output>` 块；OpenCode 的 `{ ok, value}` 信封被
 丢弃（Pi 直接展示 `return` 的值）。这两者在 OpenCode → Pi 方向上都是兼容的，
 因此无需改写。
+
+当方言为 `cloudflare` 时，会翻译
+[`@cloudflare/codemode`](https://github.com/cloudflare/agents/tree/main/packages/codemode)
+程序。`unwrap-iife` 先移除 `async () => { … }` 包装，然后
+`compileCloudflareDialect` 改写命名空间：
+
+| Cloudflare agents | Pi codemode |
+|---|---|
+| `codemode.lookupOrder({…})` | `tools.lookupOrder({…})` —— 去掉默认命名空间 |
+| `state.readFile("/path")` | `tools.state_readFile("/path")` —— 具名 provider，仅在实时目录命中时改写 |
+| `await codemode.search("query")` | 一个 `await searchTools(...)` 垫片，返回 Cloudflare 的 `{ results: [{ path, connector, method, description, kind }], total, truncated }` |
+| `await codemode.describe(path)` | 一个 `await describeTool(...)` 垫片，返回 `{ path, description, types }` |
+| `codemode.run(name)` / `codemode.step(name, fn)` | Pi 无对应能力 —— 原样保留并给出警告 |
+| `Math`/`JSON`/`console`/`Promise`/`Object`/`searchTools` 等 | 永远不会被当作 provider 命名空间 |
+
+Cloudflare 的工具命名规则（`sanitizeToolName`）与 Pi 的 `toCodemodeIdentifier`
+不同：它剥离非法字符而不是替换、给数字开头加 `_`（`3d-render` → `_3d_render`）、
+给保留字加 `_` 后缀（`delete` → `delete_`）。因此目录同时以两种拼写建索引，
+`codemode.delete_()` 能映射回 `tools.delete()`，`codemode._3d_render()` 映射到
+`tools._d_render()`。脚本自身绑定的名字（`const state = { … }`）与无法解析的
+provider 不会被改动（后者在提供了目录时会给出警告）；位置参数的 provider
+调用（`state.readFile("/path")`）原样保留，因为编译器无从得知 Pi 的参数名。
 
 ### 它刻意不动的东西
 
@@ -144,7 +168,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // 沙箱收到的源码
   passes: string[];     // 例如 ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "unknown";
   warnings: string[];
 }
 ```
@@ -170,8 +194,8 @@ interface PiCodemodeGuardDetails {
 
 markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`source`、
 `javascript`、…）、宽松的 `/* @options: … */` 行、多余的 async IIFE 包装、
-异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode 方言的
-工具路径 —— 每一项都是独立、幂等的编译 pass。
+异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode / Cloudflare
+方言的工具路径与命名空间 —— 每一项都是独立、幂等的编译 pass。
 
 ### 本扩展的 bug 会弄坏我的脚本吗？
 
@@ -189,7 +213,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 103 个单元测试
+pnpm test        # 130 个单元测试
 pnpm typecheck
 ```
 

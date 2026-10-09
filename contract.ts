@@ -15,7 +15,7 @@
 // The shape is versioned and additive-only. Consumers must ignore unknown
 // fields and fall back to the inline content when `version` is not understood.
 
-import type { CodemodeDialect } from "./opencode.ts";
+import type { CodemodeDialect } from "./dialect.ts";
 
 export const PI_CODEMODE_GUARD_DETAILS_KEY = "piCodemodeGuard" as const;
 export const PI_CODEMODE_GUARD_CONTRACT_VERSION = 1 as const;
@@ -30,7 +30,7 @@ export interface PiCodemodeGuardDetails {
   readonly passes: readonly string[];
   /** Whether the compiler could parse (or recognize) the source. */
   readonly parsed: boolean;
-  /** The dialect the model wrote: `pi`, `opencode`, or `unknown`. */
+  /** The dialect the model wrote: `pi`, `opencode`, `cloudflare`, or `unknown`. */
   readonly dialect: CodemodeDialect;
   /** Non-fatal problems. */
   readonly warnings: readonly string[];
@@ -41,7 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readDialect(value: unknown): CodemodeDialect {
-  return value === "pi" || value === "opencode" ? value : "unknown";
+  return value === "pi" || value === "opencode" || value === "cloudflare" ? value : "unknown";
 }
 
 function readStringArray(value: unknown): string[] | undefined {

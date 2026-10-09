@@ -20,12 +20,15 @@
 ## Architecture
 - `index.ts` — Extension entry. Runs `createCodemodeExtension()` through a `pi` proxy that adds `prepareArguments` to the codemode tool; compiles validated `code` in the `tool_call` handler; stamps `details.piCodemodeGuard` in `tool_result`
 - `arguments.ts` — Pre-validation argument normalization (`prepareArguments` shim): raw string, alias fields, nested source, JSON programs
-- `compile.ts` — The compiler pipeline (fences → options → JSON program → IIFE → opencode dialect → await → identifiers) and the public `CompileOptions`/`CompileResult`
+- `compile.ts` — The compiler pipeline (fences → options → JSON program → IIFE → opencode dialect → cloudflare dialect → await → identifiers) and the public `CompileOptions`/`CompileResult`
 - `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
 - `fences.ts` — Markdown fence stripping
 - `options.ts` — `// @options:` line normalization and field-alias mapping
 - `iife.ts` — Redundant async-IIFE unwrapping
-- `opencode.ts` — Dialect detection + OpenCode→Pi translation (namespace paths, `$codemode.search`, `Object.keys(tools)`)
+- `opencode.ts` — OpenCode→Pi translation (namespace paths, `$codemode.search`, `Object.keys(tools)`); re-exports the shared dialect detection
+- `cloudflare.ts` — Cloudflare agents→Pi translation (`codemode.*` namespace, `codemode.search`/`describe` shims, named providers, `sanitizeToolName` mapping)
+- `dialect.ts` — `detectCodemodeDialect` (pi/opencode/cloudflare/unknown) and the `CodemodeDialect` type
+- `catalog.ts` — Shared tool-catalog resolution and AST traversal used by both dialect compilers
 - `await-inject.ts` — acorn-based missing-`await` repair (the pi #10555 bug)
 - `rewrite.ts` — `tools["a-b"]` → `tools.a_b` identifier rewriting
 - `identifiers.ts` — pi's `toCodemodeIdentifier` rule
@@ -51,7 +54,7 @@ result the guard compiled:
 - `compiledCode` — the source the sandbox received
 - `passes` — applied pass ids in order, e.g. `["opencode-dialect(2)", "await-async-calls(2)"]`
 - `parsed` — whether the compiler recognized the source
-- `dialect` — `"pi"`, `"opencode"`, or `"unknown"`
+- `dialect` — `"pi"`, `"opencode"`, `"cloudflare"`, or `"unknown"`
 - `warnings` — non-fatal problems (e.g. a dropped `@options` line or an unresolved OpenCode tool path)
 
 Consumers must parse via `readPiCodemodeGuardDetails` and fall back to the inline
@@ -66,8 +69,9 @@ Passes run in this order and each may be skipped independently:
 3. `compile-json-program`
 4. `unwrap-iife`
 5. `opencode-dialect(N)` — only when `detectCodemodeDialect` returns `opencode`
-6. `await-async-calls(N)`
-7. `rewrite-tool-identifiers`
+6. `cloudflare-dialect(N)` — only when `detectCodemodeDialect` returns `cloudflare`
+7. `await-async-calls(N)`
+8. `rewrite-tool-identifiers`
 
 ## OpenCode dialect
 The `tools.<ns>.<tool>` → `tools.<identifier>` mapping needs Pi's live catalog,
@@ -77,6 +81,19 @@ then a fuzzy `normalizeToolKey` match, then a deterministic flatten with a
 warning. `tools.$codemode.search(...)` becomes an inline `searchTools(...)` shim
 echoing OpenCode's `{ items, remaining, next }` shape. Keep the compiler pure:
 catalog names come in as data, not from pi inside the module.
+
+## Cloudflare dialect
+`@cloudflare/codemode` (in `cloudflare/agents`, packages/codemode) writes the
+whole program as a bare `async () => { … }` wrapper, addresses tools through the
+`codemode` platform namespace and named provider namespaces (`state.*`,
+`github.*`), and uses `codemode.search`/`describe`. `unwrap-iife` removes the
+wrapper before `compileCloudflareDialect` runs. `codemode.search` and
+`codemode.describe` become inline `searchTools`/`describeTool` shims echoing
+Cloudflare's shapes; `codemode.run`/`codemode.step` have no Pi equivalent and
+warn. Named providers are only rewritten when the live catalog confirms them, so
+JS globals and locally bound objects are never touched. Cloudflare's
+`sanitizeToolName` (digit-leading prefix, reserved-word suffix) differs from Pi's
+`toCodemodeIdentifier`, so the catalog is also keyed by the Cloudflare spelling.
 
 ## External References
 | Need | File |

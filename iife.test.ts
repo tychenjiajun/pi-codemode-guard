@@ -24,6 +24,12 @@ describe("unwrapIIFE", () => {
     expect(result.code).toBe("return 1;");
   });
 
+  it("unwraps a bare async arrow (Cloudflare agents codemode shape)", () => {
+    const result = unwrapIIFE("async () => {\n  const x = await codemode.getWeather({ city: 'London' });\n  return x;\n}");
+    expect(result.changed).toBe(true);
+    expect(result.code).toBe("const x = await codemode.getWeather({ city: 'London' });\n  return x;");
+  });
+
   it("does not unwrap when there are other statements", () => {
     const code = "(async () => {\n  return 1;\n})();\nconst x = 2;";
     expect(unwrapIIFE(code).changed).toBe(false);

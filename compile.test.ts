@@ -80,6 +80,45 @@ describe("compileCodemodeSource", () => {
     expect(result.passes.some((pass) => pass.startsWith("opencode-dialect"))).toBe(false);
   });
 
+  it("compiles the Cloudflare agents codemode dialect", () => {
+    const source = [
+      "async () => {",
+      '  const matches = await codemode.search("order status");',
+      '  const order = await codemode.lookupOrder({ id: matches.results[0].path });',
+      '  await state.writeJson("/orders.json", order);',
+      "  return order;",
+      "}",
+    ].join("\n");
+    const result = compileCodemodeSource(source, { tools: ["lookupOrder", "state.writeJson"] });
+    expect(result.dialect).toBe("cloudflare");
+    expect(result.passes).toContain("unwrap-iife");
+    expect(result.passes).toContain("cloudflare-dialect(3)");
+    expect(result.code).toContain("searchTools(");
+    expect(result.code).toContain("tools.lookupOrder(");
+    expect(result.code).toContain("tools.state_writeJson(");
+    expect(result.code).not.toContain("codemode.");
+    expect(result.code).not.toContain("async () =>");
+  });
+
+  it("does not run the Cloudflare pass on Pi code", () => {
+    const result = compileCodemodeSource('const hits = await searchTools("x");\nreturn hits;');
+    expect(result.dialect).toBe("pi");
+    expect(result.passes.some((pass) => pass.startsWith("cloudflare-dialect"))).toBe(false);
+  });
+
+  it("awaits a Cloudflare search shim that forgot the await", () => {
+    const result = compileCodemodeSource('const m = codemode.search("x");\ntext(m);', { tools: [] });
+    expect(result.dialect).toBe("cloudflare");
+    expect(result.code).toContain("const m = await (async (__cm_query)");
+    expect(result.passes).toContain("await-async-calls(1)");
+  });
+
+  it("surfaces Cloudflare codemode.run warnings even without a rewrite", () => {
+    const result = compileCodemodeSource('async () => {\n  await codemode.run("saved");\n}', { tools: [] });
+    expect(result.dialect).toBe("cloudflare");
+    expect(result.warnings.some((warning) => warning.includes("codemode.run"))).toBe(true);
+  });
+
   it("never throws on unparseable source, and only runs lexical passes", () => {
     const result = compileCodemodeSource("```js\nconst = ;\n```");
     expect(result.parsed).toBe(false);

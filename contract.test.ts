@@ -33,6 +33,10 @@ describe("readPiCodemodeGuardDetails", () => {
       [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "opencode" },
     });
     expect(details?.dialect).toBe("opencode");
+    const cloudflare = readPiCodemodeGuardDetails({
+      [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: "cloudflare" },
+    });
+    expect(cloudflare?.dialect).toBe("cloudflare");
     const missing = readPiCodemodeGuardDetails({
       [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, dialect: undefined },
     });

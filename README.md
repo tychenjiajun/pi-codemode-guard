@@ -5,7 +5,7 @@ English | [简体中文](./README.zh-CN.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
@@ -13,8 +13,8 @@ English | [简体中文](./README.zh-CN.md)
 LLM-written `codemode` scripts before they reach the sandbox**. It inserts
 missing `await`, strips markdown fences, converts JSON tool-call programs into
 real JavaScript, normalizes `@options:` lines, unwraps async IIFEs, and
-translates the OpenCode dialect — so AI-generated agent scripts run instead of
-silently failing.
+translates the OpenCode and Cloudflare agents dialects — so AI-generated agent
+scripts run instead of silently failing.
 
 In one sentence: *a best-effort, idempotent compiler that turns broken
 codemode tool calls from any LLM into the exact JavaScript pi's QuickJS sandbox
@@ -72,6 +72,7 @@ Two hooks, installed automatically:
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
+| `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -81,12 +82,14 @@ tool call.
 
 ## Dialects
 
-The compiler detects which codemode dialect a script is written in and, for the
-OpenCode dialect, translates it to Pi.
+The compiler detects which codemode dialect a script is written in and
+translates it to Pi.
 
-`detectCodemodeDialect(code)` returns `pi`, `opencode`, or `unknown` with the
-signals it found. OpenCode-exclusive signals are `$codemode`, a `tools.<ns>.<tool>`
-path (Pi tools are always single-level), and `Object.keys(tools)`.
+`detectCodemodeDialect(code)` returns `pi`, `opencode`, `cloudflare`, or
+`unknown` with the signals it found. OpenCode-exclusive signals are `$codemode`, a
+`tools.<ns>.<tool>` path (Pi tools are always single-level), and
+`Object.keys(tools)`. Cloudflare signals are a `codemode.<tool>` / `codemode.search`
+platform call and the bare `async () => { … }` program wrapper.
 
 When the dialect is `opencode`, `compileOpencodeDialect` runs before the await
 pass:
@@ -109,6 +112,29 @@ catalog match is flattened deterministically and reported in `warnings`.
 `console.log` maps to Pi's `<console_output>` block and OpenCode's `{ ok, value }`
 envelope is dropped (Pi surfaces the `return` value directly); both are
 compatible in the OpenCode → Pi direction, so no rewrite is needed.
+
+When the dialect is `cloudflare`,
+[`@cloudflare/codemode`](https://github.com/cloudflare/agents/tree/main/packages/codemode)
+programs are translated. `unwrap-iife` removes the `async () => { … }` wrapper
+first, then `compileCloudflareDialect` rewrites the namespaces:
+
+| Cloudflare agents | Pi codemode |
+|---|---|
+| `codemode.lookupOrder({…})` | `tools.lookupOrder({…})` — the default namespace is stripped |
+| `state.readFile("/path")` | `tools.state_readFile("/path")` — named provider, resolved against the live catalog |
+| `await codemode.search("query")` | an `await searchTools(...)` shim returning Cloudflare's `{ results: [{ path, connector, method, description, kind }], total, truncated }` |
+| `await codemode.describe(path)` | an `await describeTool(...)` shim returning `{ path, description, types }` |
+| `codemode.run(name)` / `codemode.step(name, fn)` | no Pi equivalent — left unchanged with a warning |
+| `Math.*`, `JSON.*`, `console.*`, `Promise.*`, `searchTools`, … | never treated as a provider namespace |
+
+Cloudflare names tools with `sanitizeToolName` (hyphens/dots → `_`, invalid
+characters stripped, digit-leading names prefixed with `_`, reserved words
+suffixed with `_`), which differs from Pi's `toCodemodeIdentifier`. The catalog
+is therefore also keyed by the Cloudflare spelling, so `codemode.delete_()` maps
+back to `tools.delete()` and `codemode._3d_render()` to `tools._d_render()`.
+Provider namespaces are only rewritten when the catalog confirms them, and names
+bound by the script itself (`const state = {…}`) are never touched. Positional
+provider arguments (`state.readFile("/path")`) are preserved as written.
 
 ### What it deliberately leaves alone
 
@@ -159,7 +185,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // what the sandbox received
   passes: string[];     // e.g. ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "unknown";
   warnings: string[];
 }
 ```
@@ -189,7 +215,8 @@ JSON-serialized as `{}`, so the tool silently returns nothing. The
 Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
 `source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
 IIFE wrappers, missing `await` on async helpers, `tools["a-b"](...)` indexing,
-and OpenCode-dialect tool paths — each an independent, idempotent compile pass.
+and OpenCode / Cloudflare dialect tool paths and namespaces — each an independent,
+idempotent compile pass.
 
 ### Can a guard bug break my script?
 

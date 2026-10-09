@@ -100,8 +100,11 @@ export function createGuardedCodemodeApi(pi: ExtensionAPI): ExtensionAPI {
 }
 
 function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
-  const summary = result.passes.join(", ");
-  const dialect = result.dialect === "opencode" ? "opencode → pi" : result.dialect;
+  const summary = result.passes.length > 0 ? result.passes.join(", ") : result.warnings.join("; ");
+  const dialect =
+    result.dialect === "opencode" || result.dialect === "cloudflare"
+      ? `${result.dialect} → pi`
+      : result.dialect;
   showGuardStatus(ctx, `🛡 ${dialect} · ${summary}`);
   if (ctx.hasUI) {
     ctx.ui.notify(`pi-codemode-guard: compiled codemode script (${dialect}; ${summary})`, "info");
@@ -130,7 +133,7 @@ export default function codemodeGuardExtension(pi: ExtensionAPI): void {
       // A guard bug must never block the tool: run the model's script as-is.
       return;
     }
-    if (!result.changed) return;
+    if (!result.changed && result.warnings.length === 0) return;
 
     records.set(event.toolCallId, { originalCode: code, result });
     input.code = result.code;

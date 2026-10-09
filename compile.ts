@@ -11,21 +11,20 @@
 //   3. compile-json-program      — turn JSON tool calls into `await tools.*` calls
 //   4. unwrap-iife               — drop a redundant async IIFE wrapper
 //   5. opencode-dialect          — translate OpenCode codemode paths/search to Pi
-//   6. await-async-calls         — add the `await` models forget (pi issue #10555)
-//   7. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
+//   6. cloudflare-dialect        — translate Cloudflare agents codemode namespaces to Pi
+//   7. await-async-calls         — add the `await` models forget (pi issue #10555)
+//   8. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
 //
 // A pass that would need a parse is skipped when the script does not parse, so
 // a guard bug can never corrupt a script beyond what lexical passes already did.
 
 import { injectAwait } from "./await-inject.ts";
+import { compileCloudflareDialect } from "./cloudflare.ts";
+import { detectCodemodeDialect, type CodemodeDialect } from "./dialect.ts";
 import { stripCodeFences } from "./fences.ts";
 import { unwrapIIFE } from "./iife.ts";
 import { splitOptionsLine } from "./options.ts";
-import {
-  compileOpencodeDialect,
-  detectCodemodeDialect,
-  type CodemodeDialect,
-} from "./opencode.ts";
+import { compileOpencodeDialect } from "./opencode.ts";
 import { looksLikeToolProgram, programToJs } from "./program.ts";
 import { rewriteToolIdentifiers } from "./rewrite.ts";
 
@@ -97,20 +96,29 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
   }
 
   if (!parsed) {
+    // Detect before unwrapping: Cloudflare's `async () => { ... }` wrapper is
+    // itself a dialect signal, so it must be seen before `unwrap-iife` strips it.
+    dialect = detectCodemodeDialect(body).dialect;
+
     const iife = unwrapIIFE(body);
     if (iife.changed) {
       body = iife.code;
       passes.push("unwrap-iife");
     }
 
-    const detection = detectCodemodeDialect(body);
-    dialect = detection.dialect;
     if (dialect === "opencode") {
       const opencode = compileOpencodeDialect(body, options);
       if (opencode.changed) {
         body = opencode.code;
         passes.push(`opencode-dialect(${opencode.rewrites})`);
         warnings.push(...opencode.warnings);
+      }
+    } else if (dialect === "cloudflare") {
+      const cloudflare = compileCloudflareDialect(body, options);
+      warnings.push(...cloudflare.warnings);
+      if (cloudflare.changed) {
+        body = cloudflare.code;
+        passes.push(`cloudflare-dialect(${cloudflare.rewrites})`);
       }
     }
 

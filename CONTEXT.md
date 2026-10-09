@@ -94,6 +94,32 @@ Name resolution needs Pi's live catalog: the extension passes
 fuzzy `normalizeToolKey` match (`mcp.dev.radius.search` ↔
 `mcp__dev-radius__search`), then a deterministic flatten plus a `warning`.
 
+## Cloudflare dialect (`@cloudflare/codemode`)
+
+Cloudflare's `packages/codemode` in the `cloudflare/agents` repo also shares the
+`{ code }` envelope, but the whole program is a bare `async () => { … }` wrapper
+and tools live on namespaces:
+
+| Cloudflare | Pi |
+|---|---|
+| `async () => { … }` | the body (`unwrap-iife` already strips the wrapper) |
+| `codemode.lookupOrder({ … })` | `tools.lookupOrder({ … })` — the default `codemode` namespace is stripped |
+| `state.readFile("/path")` | `tools.state_readFile("/path")` — named provider, only when the live catalog confirms it |
+| `await codemode.search("query")` | an `await searchTools(...)` shim returning `{ results: [{ path, connector, method, description, kind }], total, truncated }` |
+| `await codemode.describe(path)` | an `await describeTool(...)` shim returning `{ path, description, types }` |
+| `codemode.run(name)` / `codemode.step(name, fn)` | no Pi equivalent — left unchanged with a `warning` |
+| `Math`/`JSON`/`console`/`Promise`/`Object`/`searchTools`, … | never a provider namespace |
+
+Cloudflare's naming rule (`sanitizeToolName`) differs from Pi's
+`toCodemodeIdentifier`: it strips invalid characters instead of replacing them,
+prefixes digit-leading names (`3d-render` → `_3d_render`), and suffixes reserved
+words (`delete` → `delete_`). The catalog is therefore keyed by both spellings,
+so `codemode.delete_()` maps back to `tools.delete()` and `codemode._3d_render()`
+to `tools._d_render()`. Names bound by the script (`const state = { … }`) and
+unresolved providers are left untouched (the latter with a `warning` when a
+catalog is present); positional provider arguments are preserved verbatim because
+the compiler cannot know Pi's parameter names.
+
 ## Pipeline (high level)
 
 ```
@@ -114,8 +140,9 @@ tool_call event (index.ts)
     3 compile-json-program
     4 unwrap-iife
     5 opencode-dialect      (only when the dialect is opencode)
-    6 await-async-calls
-    7 rewrite-tool-identifiers
+    6 cloudflare-dialect    (only when the dialect is cloudflare)
+    7 await-async-calls
+    8 rewrite-tool-identifiers
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -145,8 +172,10 @@ tool_result event → details.piCodemodeGuard + compile receipt
 - **tool_call event** — pi event fired after validation; `event.input` is
   mutable and is not re-validated.
 - **pass** — one best-effort compiler transformation, identified in `passes`.
-- **dialect** — `pi`, `opencode`, or `unknown`; OpenCode is the
-  `@opencode-ai/codemode` program API (nested tool paths, `$codemode.search`).
+- **dialect** — `pi`, `opencode`, `cloudflare`, or `unknown`; OpenCode is the
+  `@opencode-ai/codemode` program API (nested tool paths, `$codemode.search`),
+  Cloudflare is the `@cloudflare/codemode` API (`codemode.*`, named providers,
+  bare `async () => { … }` wrapper).
 - **catalog** — the Pi tool names (`pi.getAllTools()`), needed to collapse an
   OpenCode namespace path to Pi's flat identifier.
 - **guard details** — `details.piCodemodeGuard`, the versioned record of what

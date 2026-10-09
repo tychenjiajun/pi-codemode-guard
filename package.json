@@ -2,7 +2,7 @@
   "name": "pi-codemode-guard",
   "version": "0.1.0",
   "type": "module",
-  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, and missing await on async helpers",
+  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options lines, IIFE wrappers, JSON tool-call programs, missing await, and the OpenCode / Cloudflare agents dialects",
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
@@ -11,7 +11,11 @@
     "./arguments": "./arguments.ts",
     "./arguments.ts": "./arguments.ts",
     "./contract": "./contract.ts",
-    "./contract.ts": "./contract.ts"
+    "./contract.ts": "./contract.ts",
+    "./cloudflare": "./cloudflare.ts",
+    "./cloudflare.ts": "./cloudflare.ts",
+    "./dialect": "./dialect.ts",
+    "./dialect.ts": "./dialect.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -30,6 +34,8 @@
     "await",
     "tool-guard",
     "opencode",
+    "cloudflare",
+    "dialect",
     "quickjs",
     "typescript"
   ],
