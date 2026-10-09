@@ -1,0 +1,6 @@
+docs: link dialect source repos from README, AGENTS, CONTEXT
+
+- README: link @opencode-ai/codemode (anomalyco/opencode) and @tanstack/ai-code-mode
+- AGENTS.md / CONTEXT.md: add source URLs to the OpenCode, Cloudflare, and TanStack dialect headers
+
+Co-Authored-By: MiMo <mimo@xiaomi.com>

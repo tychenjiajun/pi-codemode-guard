@@ -77,7 +77,7 @@ Passes run in this order and each may be skipped independently:
 9. `await-async-calls(N)` — insert missing `await` on `tools.*`/lookup helpers
 10. `rewrite-tool-identifiers` — `tools["a-b"]` → `tools.a_b`
 
-## OpenCode dialect
+## OpenCode dialect (`@opencode-ai/codemode`, https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
 The `tools.<ns>.<tool>` → `tools.<identifier>` mapping needs Pi's live catalog,
 so `compileCodemodeSource(input, { tools: pi.getAllTools().map((t) => t.name) })`
 must be given it. Resolution order: exact separators (`.`, `__`, `_`, `/`, `-`),
@@ -86,7 +86,7 @@ warning. `tools.$codemode.search(...)` becomes an inline `searchTools(...)` shim
 echoing OpenCode's `{ items, remaining, next }` shape. Keep the compiler pure:
 catalog names come in as data, not from pi inside the module.
 
-## Cloudflare dialect
+## Cloudflare dialect (`@cloudflare/codemode`, https://github.com/cloudflare/agents/tree/main/packages/codemode)
 `@cloudflare/codemode` (in `cloudflare/agents`, packages/codemode) writes the
 whole program as a bare `async () => { … }` wrapper, addresses tools through the
 `codemode` platform namespace and named provider namespaces (`state.*`,
@@ -99,7 +99,7 @@ JS globals and locally bound objects are never touched. Cloudflare's
 `sanitizeToolName` (digit-leading prefix, reserved-word suffix) differs from Pi's
 `toCodemodeIdentifier`, so the catalog is also keyed by the Cloudflare spelling.
 
-## TanStack AI code mode dialect
+## TanStack AI code mode dialect (`@tanstack/ai-code-mode`, https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
 `@tanstack/ai-code-mode` takes `{ typescriptCode }` (accepted as an `arguments.ts`
 alias) and runs each tool as a global `external_<tool>` async function in a TS
 sandbox. `compileTanstackDialect` rewrites `external_<tool>(...)` →

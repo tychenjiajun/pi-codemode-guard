@@ -69,7 +69,7 @@ The three observed real-world failures this extension exists for:
 3. **JSON tool-call programs** — models that cannot write JavaScript emit the
    calls as JSON; the guard compiles them.
 
-## OpenCode dialect (`@opencode-ai/codemode`)
+## OpenCode dialect (`@opencode-ai/codemode`, https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
 
 OpenCode's `packages/codemode` has the **same `{ code }` envelope** but a
 different program API. `detectCodemodeDialect` flags it from `$codemode`, a
@@ -94,7 +94,7 @@ Name resolution needs Pi's live catalog: the extension passes
 fuzzy `normalizeToolKey` match (`mcp.dev.radius.search` ↔
 `mcp__dev-radius__search`), then a deterministic flatten plus a `warning`.
 
-## Cloudflare dialect (`@cloudflare/codemode`)
+## Cloudflare dialect (`@cloudflare/codemode`, https://github.com/cloudflare/agents/tree/main/packages/codemode)
 
 Cloudflare's `packages/codemode` in the `cloudflare/agents` repo also shares the
 `{ code }` envelope, but the whole program is a bare `async () => { … }` wrapper
@@ -120,7 +120,7 @@ unresolved providers are left untouched (the latter with a `warning` when a
 catalog is present); positional provider arguments are preserved verbatim because
 the compiler cannot know Pi's parameter names.
 
-## TanStack AI code mode dialect (`@tanstack/ai-code-mode`)
+## TanStack AI code mode dialect (`@tanstack/ai-code-mode`, https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
 
 TanStack's `createCodeModeTool` shares the `{ code }` envelope (its input field is
 `typescriptCode`, accepted as an alias), but the sandbox is different: tools are

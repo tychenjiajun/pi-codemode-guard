@@ -95,7 +95,9 @@ platform call and the bare `async () => { … }` program wrapper. TanStack signa
 are a bare `external_<tool>` binding reference (never a `tools.external_<tool>`
 member access).
 
-When the dialect is `opencode`, `compileOpencodeDialect` runs before the await
+When the dialect is `opencode`,
+[`@opencode-ai/codemode`](https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
+programs are translated. `compileOpencodeDialect` runs before the await
 pass:
 
 | OpenCode (`@opencode-ai/codemode`) | Pi codemode |
