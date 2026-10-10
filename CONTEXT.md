@@ -251,11 +251,17 @@ PTC and Codex expose globals Pi's QuickJS sandbox does not define — PTC's
 `runtime` category for general-purpose APIs other environments provide that
 Pi's QuickJS sandbox also lacks: `setInterval`/`clearInterval`, `Intl`,
 `structuredClone`, `TextEncoder`/`TextDecoder`, `URL`/`URLSearchParams`,
-`crypto`, `fetch`, `process`, `require`, `Buffer`. The guard cannot translate
+`crypto`, `fetch`, `process`, `require`, `Buffer`, plus host globals such as
+`Atomics`, `WebAssembly`, `AbortController`, `Headers`, `Request`, `Response`,
+`localStorage`, `window`, `document` (25 `runtime` rows in all). The guard
+cannot translate
 any of them, so it **leaves the call in place** (never deletes it: silent code loss
 would move the failure or hang a script) and reports a diagnostic that names a
 replacement where one exists (`generatedImage` → `image(block)`, `notify` →
-`console.log(...)`).
+`console.log(...)`). The diagnostic fires **only when nothing resolves**: a
+reference the live catalog confirms as a real tool — `fetch({q})` with a tool
+`fetch`, `crypto.read` with a tool `crypto_read` — rewrites through its own rule
+and stays silent.
 
 The single source of truth is the `UNSUPPORTED_GLOBALS` table in
 `dialect/signals.ts`. Each row carries the identifier, its dialect (`codex`,
@@ -263,10 +269,18 @@ The single source of truth is the `UNSUPPORTED_GLOBALS` table in
 so it never appears in the contract's `dialect` field or in a pass id), the warning
 `message`, and a `distinctive` flag. The translator warns from the row once per
 identifier (`unsupported:<name>`), so `crypto.randomUUID()` gets the runtime
-message and never a Cloudflare one; `detect.ts` derives both its AST check and
-its raw-text signal from the same rows (only `distinctive` names are signals —
-every `runtime` row is non-distinctive, so a common name like `setTimeout`
-warns without causing a false dialect detection). Add a dialect global or
+message and never a Cloudflare one — a chain root that is an absent global,
+`crypto.read()`, skips both provider messages for the same reason; `detect.ts`
+derives both its AST check and its raw-text signal from the same rows (only
+`distinctive` names are signals — every `runtime` row is non-distinctive, so a
+common name like `setTimeout` warns without causing a false dialect detection).
+Whether a global is present
+or absent also has one home: `core/pi-globals.ts` classifies every host global
+in `PI_SANDBOX_HOST_GLOBALS` as either present in the sandbox
+(`PI_SANDBOX_GLOBALS` / `PI_SANDBOX_BUILTINS`) or absent (an
+`UNSUPPORTED_GLOBALS` row) — never both, never neither — and table-driven tests
+in `dialect/signals.test.ts` fail the suite if the vocabulary drifts from the
+real sandbox. Add a dialect global or
 `runtime` row there, not in three places.
 
 ## Pipeline (high level)
