@@ -102,4 +102,22 @@ describe("splitOptionsLine", () => {
     expect(proseAgain.changed).toBe(false);
     expect(proseAgain.body).toBe(prose);
   });
+
+  it("maps Codex's `@exec` pragma to `@options` and drops `yield_time_ms`", () => {
+    const result = splitOptionsLine('// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}\nreturn 1;');
+    expect(result.directive).toBe("exec");
+    expect(result.optionsLine).toBe('// @options: {"max_output_tokens": 1000}');
+    expect(result.body).toBe("return 1;");
+    expect(result.warnings).toContain(
+      "dropped `yield_time_ms` from the @exec pragma; Pi streams output when the script ends",
+    );
+  });
+
+  it("neutralizes an `@exec` pragma with no Pi-recognized field", () => {
+    const result = splitOptionsLine('// @exec: {"yield_time_ms": 10000}\nreturn 1;');
+    expect(result.directive).toBe("exec");
+    expect(result.optionsLine).toBeUndefined();
+    expect(result.body).toContain("// pi-codemode-guard: ignored an unparseable @exec line");
+    expect(result.warnings.some((warning) => warning.includes("yield_time_ms"))).toBe(true);
+  });
 });

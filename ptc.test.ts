@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { compileCodemodeSource } from "./compile.ts";
 import { detectCodemodeDialect } from "./dialect.ts";
-import { compilePtcDialect } from "./ptc.ts";
+import { compilePtcDialect } from "./translate.ts";
 
 describe("detectCodemodeDialect: ptc", () => {
   it("detects parseable JavaScript using ToolCallError", () => {

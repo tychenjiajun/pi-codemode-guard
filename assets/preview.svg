@@ -38,7 +38,7 @@
 
   <!-- box 2: guard -->
   <text x="610" y="300" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">pi-codemode-guard</text>
-  <text x="610" y="328" font-size="16" fill="#ece5ff" text-anchor="middle">10 idempotent</text>
+  <text x="610" y="328" font-size="16" fill="#ece5ff" text-anchor="middle">9 idempotent</text>
   <text x="610" y="350" font-size="16" fill="#ece5ff" text-anchor="middle">compile passes</text>
 
   <!-- box 3: sandbox -->
@@ -63,9 +63,15 @@
     <text x="849" y="439" text-anchor="middle" dominant-baseline="central">Cloudflare</text>
     <rect x="940" y="420" width="150" height="38" rx="19" fill="#ede9fe"/>
     <text x="1015" y="439" text-anchor="middle" dominant-baseline="central">TanStack</text>
+    <rect x="359" y="470" width="150" height="38" rx="19" fill="#ede9fe"/>
+    <text x="434" y="489" text-anchor="middle" dominant-baseline="central">Vercel</text>
+    <rect x="525" y="470" width="150" height="38" rx="19" fill="#ede9fe"/>
+    <text x="600" y="489" text-anchor="middle" dominant-baseline="central">PTC</text>
+    <rect x="691" y="470" width="150" height="38" rx="19" fill="#ede9fe"/>
+    <text x="766" y="489" text-anchor="middle" dominant-baseline="central">Codex</text>
   </g>
 
   <!-- footer -->
   <text x="600" y="546" font-size="20" fill="#6b6580" text-anchor="middle">best-effort · idempotent · pure compiler — never blocks a tool call</text>
-  <text x="600" y="582" font-size="15" fill="#a39fb8" text-anchor="middle">MIT · TypeScript strict · 152 unit tests · OpenCode · Cloudflare agents · TanStack AI code mode</text>
+  <text x="600" y="582" font-size="15" fill="#a39fb8" text-anchor="middle">MIT · TypeScript strict · 344 unit tests · OpenCode · Cloudflare · TanStack · Vercel · PTC · Codex · 6 dialects</text>
 </svg>

@@ -116,7 +116,8 @@ function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
     result.dialect === "cloudflare" ||
     result.dialect === "tanstack" ||
     result.dialect === "vercel" ||
-    result.dialect === "ptc";
+    result.dialect === "ptc" ||
+    result.dialect === "codex";
   const dialect = translated ? `${result.dialect} → pi` : result.dialect;
   showGuardStatus(ctx, `🛡 ${dialect} · ${summary}`);
   if (ctx.hasUI) {

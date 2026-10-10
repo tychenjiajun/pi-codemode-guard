@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { detectCodemodeDialect } from "./dialect.ts";
-import { compileVercelDialect } from "./vercel.ts";
+import { compileVercelDialect } from "./translate.ts";
 
 describe("detectCodemodeDialect: vercel", () => {
   it("detects TypeScript with a bare tools.<name> call", () => {

@@ -17,10 +17,10 @@ English | [简体中文](./README.zh-CN.md)
 [pi](https://github.com/earendil-works/pi) AI coding agent that **repairs
 LLM-written `codemode` scripts before they reach the sandbox**. It inserts
 missing `await`, strips markdown fences, converts JSON tool-call programs into
-real JavaScript, normalizes `@options:` lines, unwraps async IIFEs, and
-translates the OpenCode, Cloudflare agents, TanStack AI, Vercel AI SDK, and
-DeepSeek Harness PTC code mode dialects — so AI-generated agent scripts run
-instead of silently failing.
+real JavaScript, normalizes `@options:` / `@exec:` pragmas, unwraps async IIFEs, and
+translates the OpenCode, Cloudflare agents, TanStack AI, Vercel AI SDK,
+DeepSeek Harness PTC, and OpenAI Codex code mode dialects — so AI-generated
+agent scripts run instead of silently failing.
 
 In one sentence: *a best-effort, idempotent compiler that turns broken
 codemode tool calls from any LLM into the exact JavaScript pi's QuickJS sandbox
@@ -75,35 +75,49 @@ Two hooks, installed automatically:
 |------|--------|-------|
 | `strip-code-fence` | ` ```js\nconst x = 1;\n``` ` | `const x = 1;` |
 | `normalize-options-line` | `/* @options: {'maxOutputTokens': 2000} */` | `// @options: {"max_output_tokens": 2000}` |
+| `normalize-options-line` | `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}` (+ a `yield_time_ms` warning) |
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
 | `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
 | `vercel-typescript` | `const c: string = "London";` | `const c = "London";` |
 | `ptc-typescript` | `let total: number = 0;` | `let total = 0;` |
 | `strip-typescript` | `const n: number = 1;` (no dialect claimed it) | `const n = 1;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
+| `translate-statements` | one statement-based pass over every dialect construct | OpenCode/Cloudflare/TanStack/Vercel/PTC/Codex constructs translated independently |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
 | `tanstack-dialect` | `external_getWeather({…})` | `tools.getWeather({…})` |
 | `vercel-dialect` | `await tools["web-search"]({ q })` | `await tools.web_search({ q })` |
 | `ptc-dialect` | `await tools["my-tool"]({ q })` | `await tools.my_tool({ q })` |
+| `codex-dialect` | `yield_control()` / Codex-only helpers | left in place with a warning |
+| `bare-tool-calls` | `search({ q })` (a known tool name) | `tools.search({ q })` |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
 Every pass is independent, idempotent, and best-effort. A script that does not
 parse is returned unchanged with a warning, so a guard bug can never block a
 tool call. A JSON tool-call program is compiler-generated JavaScript: it skips
-the dialect passes and runs only `await-async-calls` and
+statement translation and runs only `await-async-calls` and
 `rewrite-tool-identifiers` on the result.
+
+Translation is **statement-based**: a snippet may mix dialects, and each
+construct is repaired by its shape rather than by one dialect detected for the
+whole snippet. The per-dialect pass ids above are reported for attribution; a
+single compile can list several of them at once (plus `translate-statements`).
 
 ## Dialects
 
-The compiler detects which codemode dialect a script is written in and
-translates it to Pi.
+The compiler detects which codemode dialect a script is written in, but
+translation no longer depends on that single answer: `translateCodemode` parses
+the source once and translates **each statement by its shape**, so OpenCode,
+Cloudflare, TanStack, Vercel/PTC and Codex constructs in one snippet are all
+repaired. Detection is still used to pick the TypeScript-stripping pass, to
+disambiguate the two constructs OpenCode and PTC share (`Object.keys(tools)` and
+unresolved bracket names), and to report `dialect` in the interop contract.
 
-`detectCodemodeDialect(code, { hadOptionsLine })` returns `pi`, `opencode`,
-`cloudflare`, `tanstack`, `vercel`, `ptc`, or `unknown` with the signals it
-found; the context flag restores the `@options` signal the options pass
-removed. OpenCode-exclusive signals are
+`detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` returns `pi`,
+`opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, `codex`, or `unknown` with
+the signals it found; the context flags restore the `@options` / `@exec` signal
+the options pass removed. OpenCode-exclusive signals are
 `$codemode`, a `tools.<ns>.<tool>` path (Pi tools are always single-level), and
 `Object.keys(tools)`. Cloudflare signals are a `codemode.<tool>` / `codemode.search`
 platform call and the bare `async () => { … }` program wrapper. TanStack signals
@@ -116,8 +130,11 @@ signals are `ptc:ToolCallError` and `ptc:import()`, plus `ptc:Object.keys(tools)
 only when acorn cannot parse the TypeScript; OpenCode's structural signals
 (`$codemode` / nested `tools.<ns>.<tool>`), TanStack, and Cloudflare take
 priority, but PTC's own signals outrank the generic `Object.keys(tools)` shape
-that OpenCode also uses. Vercel remains the generic TypeScript fallback, so a
-PTC program with none of these signals is still compiled correctly as `vercel`.
+that OpenCode also uses. Codex signals are the `@exec` pragma and the Codex-only
+helpers (`yield_control`, `notify`, `generatedImage`, `audio`); they outrank
+Pi's own helper signals because a Codex script also uses `ALL_TOOLS`/`models`.
+Vercel remains the generic TypeScript fallback, so a PTC program with none of
+these signals is still compiled correctly as `vercel`.
 
 When the dialect is `opencode`,
 [`@opencode-ai/codemode`](https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
@@ -242,6 +259,24 @@ warnings: `fetch`, `process`, and `require` are not detected (they are
 unavailable in the sandbox and fail at runtime instead). `console.log(...)` and
 `return` are PTC's output channels and are Pi-compatible.
 
+### OpenAI Codex code mode (`codex-rs/code-mode-runtime`)
+
+[OpenAI Codex](https://github.com/openai/codex/tree/main/codex-rs/code-mode-runtime)
+runs its `exec` tool as raw JavaScript in a fresh V8 isolate. Its program API is
+close to Pi's, so most of a Codex script is already valid:
+
+| Codex | Pi codemode |
+|---|---|
+| `exec({ code: "…" })` | `codemode({ code: "…" })` |
+| `await tools.mcp__ologs__get_profile({…})` | unchanged — Codex's `normalize_code_mode_identifier` is exactly Pi's `toCodemodeIdentifier` |
+| `text` / `image` / `store` / `load` / `exit` | unchanged |
+| `ALL_TOOLS` as `{ name, description }[]` | unchanged |
+| `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}` — `yield_time_ms` is dropped with a warning |
+| `audio` / `generatedImage` / `notify` / `yield_control` / `setTimeout` / `clearTimeout` | no Pi equivalent — left in place with a warning |
+
+The only translation is the pragma and the Codex-only helpers; the `codex`
+dialect exists so a Codex script is reported and its boundaries are surfaced.
+
 ### What it deliberately leaves alone
 
 - Missing `await` inside a **non-async** function (inserting one is a syntax
@@ -253,8 +288,10 @@ unavailable in the sandbox and fail at runtime instead). `console.log(...)` and
 ### Known limitations
 
 - Statement-form Cloudflare programs that use only named providers (no
-  `codemode.*` call, no async-arrow wrapper) detect as `unknown` — detection is
-  catalog-free — so the provider rewrites never run.
+  `codemode.*` call, no async-arrow wrapper) report `dialect: unknown` —
+  detection is catalog-free — so the interop `dialect` is inaccurate, but the
+  provider rewrite still runs: `translate.ts` applies the Cloudflare rule to
+  every statement, catalog permitting.
 - Non-erasable TypeScript: sucrase compiles `enum`/`namespace` into running
   JavaScript, where DeepSeek's erasable-only PTC reference would reject them.
 - Identifier collisions (`web-search` / `web_search`): resolution is
@@ -313,7 +350,7 @@ interface PiCodemodeGuardDetails {
   compiledCode: string; // what the sandbox received
   passes: string[];     // e.g. ["opencode-dialect(2)", "await-async-calls(2)"]
   parsed: boolean;
-  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "unknown";
+  dialect: "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "unknown";
   warnings: string[];
 }
 ```
@@ -344,7 +381,8 @@ Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
 `source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
 IIFE wrappers, stray TypeScript annotations outside any dialect, missing `await`
 on async helpers, `tools["a-b"](…)` indexing,
-and OpenCode / Cloudflare / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC
+and OpenCode / Cloudflare / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC /
+OpenAI Codex
 code mode dialect tool
 paths and namespaces — each an independent, idempotent compile pass.
 
@@ -365,7 +403,7 @@ small proxy, keeping the original schema, `models`, `store()` persistence, and
 
 ```bash
 pnpm install
-pnpm test        # 318 unit tests
+pnpm test        # 344 unit tests
 pnpm typecheck
 ```
 

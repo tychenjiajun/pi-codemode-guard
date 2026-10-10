@@ -15,6 +15,10 @@
 //   ptc         — DeepSeek Harness PTC: arbitrary-string tool names in
 //                 `tools["raw-name"]`, `Object.keys(tools)`, `ToolCallError`,
 //                 and `await import(...)` (Node APIs) — `@deepseek-ai/dsh-ptc-runtime-node`
+//   codex       — OpenAI Codex code mode: a `// @exec:` pragma and the
+//                 Codex-only helpers (`yield_control`, `notify`,
+//                 `generatedImage`, `audio`); tool calls are already Pi
+//                 identifiers — `codex-rs/code-mode-runtime`
 //
 // Detection is deliberately lexical + shallow-AST only: it never rewrites, so a
 // false positive is a wrong `details.dialect`, not a corrupted script.
@@ -26,7 +30,7 @@
 import { collectBoundNames, collectChain, walk } from "./catalog.ts";
 import { parseScript, type AstNode } from "./parse.ts";
 
-export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "unknown";
+export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "unknown";
 
 const TANSTACK_PREFIX = "external_";
 /** A bare `external_<tool>` reference (not `tools.external_<tool>`), for unparseable TypeScript. */
@@ -45,6 +49,8 @@ const CLOUDFLARE_LEXICAL = /\bcodemode\s*\./;
 const PTC_TOOL_CALL_ERROR_LEXICAL = /\bToolCallError\b/;
 const PTC_IMPORT_LEXICAL = /\bimport\s*\(/;
 const PTC_OBJECT_KEYS_LEXICAL = /\bObject\.keys\s*\(\s*tools\s*\)/;
+/** Codex-only helper names (also survive as raw text in unparseable TypeScript). */
+const CODEX_HELPER_LEXICAL = /\b(?:yield_control|generatedImage|notify|audio)\b/;
 /**
  * Cheap lexical check for a locally bound `tools`, used only when the script
  * does not parse (no AST to run `collectBoundNames` on). Best-effort: it looks
@@ -122,6 +128,8 @@ export interface DialectDetectionContext {
    * comment is no longer visible to the lexical signal check).
    */
   readonly hadOptionsLine?: boolean;
+  /** Like {@link hadOptionsLine}, for Codex's `// @exec:` pragma. */
+  readonly hadExecLine?: boolean;
 }
 
 const CODEMODE_PLATFORM_METHODS = new Set(["search", "describe", "run", "step"]);
@@ -178,6 +186,7 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
   const signals = new Set<string>();
 
   if (/@options/i.test(code) || context.hadOptionsLine === true) signals.add("pi:@options");
+  if (/@exec/i.test(code) || context.hadExecLine === true) signals.add("codex:@exec");
 
   const ast = parseScript(code);
   // A locally bound `tools` shadows the sandbox global: its namespace paths,
@@ -222,6 +231,11 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
       if (node.type === "Identifier") {
         const name = node.name as string;
         if (name === "ToolCallError") signals.add("ptc:ToolCallError");
+        if (name === "yield_control" || name === "generatedImage" || name === "notify" || name === "audio") {
+          const parent = parents[parents.length - 1];
+          const isMemberProperty = parent?.type === "MemberExpression" && parent.property === node;
+          if (!isMemberProperty && !isDeclarationPosition(node, parents)) signals.add(`codex:${name}`);
+        }
         if (name === "ALL_TOOLS") signals.add("pi:ALL_TOOLS");
         if (name === "searchTools" || name === "describeTool" || name === "describeNamespace") {
           signals.add(`pi:${name}`);
@@ -286,6 +300,9 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
         // Vercel AI SDK code mode shape (`js` field, `tools.<name>` calls).
         signals.add("vercel:tools.<name>");
       }
+      if (CODEX_HELPER_LEXICAL.test(lexical)) {
+        signals.add("codex:helper");
+      }
     }
   }
 
@@ -315,6 +332,10 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
 
   // 6. Vercel's TypeScript + `tools` reference fallback.
   if (list.includes("vercel:tools.<name>")) return { dialect: "vercel", signals: list };
+
+  // 6.5. Codex's `@exec` pragma and its code-mode-only helpers. Checked before
+  // Pi's own helpers because a Codex script also uses `ALL_TOOLS`/`models`.
+  if (list.some((signal) => signal.startsWith("codex:"))) return { dialect: "codex", signals: list };
 
   // 7. Pi's own helpers and options.
   if (list.some((signal) => signal.startsWith("pi:"))) return { dialect: "pi", signals: list };

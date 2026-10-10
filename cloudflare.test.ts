@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { compileCloudflareDialect, cloudflareSanitize } from "./cloudflare.ts";
+import { compileCloudflareDialect, cloudflareSanitize } from "./translate.ts";
 import { detectCodemodeDialect } from "./dialect.ts";
 
 describe("cloudflareSanitize", () => {

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { compileCodemodeSource } from "./compile.ts";
-import { compileOpencodeDialect, detectCodemodeDialect, normalizeToolKey, OPENCODE_SEARCH_SHIM } from "./opencode.ts";
+import { compileOpencodeDialect } from "./translate.ts";
+import { detectCodemodeDialect } from "./dialect.ts";
+import { normalizeToolKey } from "./catalog.ts";
+import { OPENCODE_SEARCH_SHIM } from "./shims.ts";
 
 describe("detectCodemodeDialect", () => {
   it("detects the OpenCode search namespace", () => {

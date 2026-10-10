@@ -13,26 +13,24 @@
 ## Key Conventions
 - This is a **pi extension** — entry point is `index.ts`
 - Test files: `*.test.ts` alongside source files
-- Keep the compiler **pure**: every pass in `compile.ts` takes a string and returns a string; no I/O, no pi state. Passes that need the tool catalog get it as a name list (`rewriteToolIdentifiers(code, tools?)`, `compileCodemodeSource(input, { tools })`), so they stay data-only
+- Keep the compiler **pure**: every pass in `compile.ts` takes a string and returns a string; no I/O, no pi state. Passes that need the tool catalog get it as a name list (`translateCodemode(code, { tools, dialect })`, `rewriteToolIdentifiers(code, tools?)`, `compileCodemodeSource(input, { tools })`), so they stay data-only
 - A compile pass must be **best-effort and idempotent**: `compile(compile(x)) === compile(x)`, and an unparseable script is returned unchanged (with a warning) instead of throwing
+- Translation is **statement-based**, not whole-snippet: `translateCodemode` parses once and repairs each construct by its shape, so a snippet that mixes dialects is fully translated. Do not reintroduce a single-dialect `if/else` in `compile.ts`; add a rule to `translate.ts` instead
 - Use `vi`/fixtures for time-dependent or UI tests; mock `pi` and `ctx.ui` as `index.test.ts` does
 
 ## Architecture
 - `index.ts` — Extension entry. Runs `createCodemodeExtension()` through a `pi` proxy that adds `prepareArguments` to the codemode tool; compiles validated `code` in the `tool_call` handler; stamps `details.piCodemodeGuard` in `tool_result`
 - `arguments.ts` — Pre-validation argument normalization (`prepareArguments` shim): raw string, alias fields, nested source, JSON programs
-- `compile.ts` — The compiler pipeline (fences → options → JSON program → tanstack/vercel/ptc typescript → generic strip-typescript → IIFE → opencode / cloudflare / tanstack / vercel / ptc dialect → await → identifiers) and the public `CompileOptions`/`CompileResult`
+- `compile.ts` — The compiler pipeline (fences → options → JSON program → dialect TypeScript → generic strip-typescript → IIFE → statement translation → await → identifiers) and the public `CompileOptions`/`CompileResult`
+- `translate.ts` — The statement-based translator: one AST walk that applies every dialect's rewrite rules by construct shape (OpenCode namespace paths/`$codemode`, Cloudflare `codemode.*`/providers, TanStack `external_<tool>`, Vercel/PTC `tools["raw"]`, Codex-only helpers, bare tool calls), plus `cloudflareSanitize`/`cloudflareUnsanitize` and the TanStack scope analysis. It also exports the single-dialect entry points (`compileOpencodeDialect`, `compileCloudflareDialect`, `compileTanstackDialect`, `compileVercelDialect`, `compilePtcDialect`, `compileCodexDialect`) — thin `only`-scoped wrappers kept for the isolated dialect tests. There are no per-dialect compiler modules; the rules live only here
+- `shims.ts` — The inline runtime shims the translator splices in (`OPENCODE_SEARCH_SHIM`, `CLOUDFLARE_SEARCH_SHIM`/`DESCRIBE_SHIM`, `CODEMODE_KEYS_SHIM`, `namespaceKeysShim`)
 - `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
 - `fences.ts` — Markdown fence stripping
-- `options.ts` — `// @options:` line normalization and field-alias mapping
+- `options.ts` — `// @options:` / Codex `// @exec:` line normalization and field-alias mapping
 - `iife.ts` — Redundant async-IIFE unwrapping
-- `opencode.ts` — OpenCode→Pi translation (namespace paths, `$codemode.search`, `Object.keys(tools)`); re-exports the shared dialect detection
-- `cloudflare.ts` — Cloudflare agents→Pi translation (`codemode.*` namespace, `codemode.search`/`describe` shims, named providers, `sanitizeToolName` mapping)
-- `tanstack.ts` — TanStack AI code mode→Pi translation (`external_<tool>` bindings → `tools.*`, via the shared catalog)
-- `vercel.ts` — Vercel AI SDK code mode→Pi translation (`{ js }` envelope, TypeScript source, `tools["raw-name"]` → `tools.<identifier>`, via the shared catalog)
-- `ptc.ts` — DeepSeek Harness PTC dialect→Pi translation (global `tools` with arbitrary raw names, `Object.keys(tools)` → `ALL_TOOLS`, TypeScript source, via the shared catalog)
-- `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, and DeepSeek PTC's `run_code` all accept TS, Pi's sandbox is JS)
-- `dialect.ts` — `detectCodemodeDialect(code, { hadOptionsLine })` (pi/opencode/cloudflare/tanstack/vercel/ptc/unknown); the context flag restores the `@options` signal that pass 2's split removed — and the `CodemodeDialect` type
-- `catalog.ts` — Shared tool-catalog resolution and AST traversal used by both dialect compilers
+- `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, DeepSeek PTC's `run_code`, and any stray TypeScript)
+- `dialect.ts` — `detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` (pi/opencode/cloudflare/tanstack/vercel/ptc/codex/unknown); the context flags restore the pragma signals that pass 2's split removed — and the `CodemodeDialect` type
+- `catalog.ts` — Shared tool-catalog resolution and AST traversal used by the translator
 - `await-inject.ts` — acorn-based missing-`await` repair (the pi #10555 bug)
 - `rewrite.ts` — catalog-aware `tools["a-b"]` → `tools.a_b` identifier rewriting (`rewriteToolIdentifiers(code, tools?)`)
 - `identifiers.ts` — pi's `toCodemodeIdentifier` rule
@@ -58,8 +56,8 @@ result the guard compiled:
 - `compiledCode` — the source the sandbox received
 - `passes` — applied pass ids in order, e.g. `["opencode-dialect(2)", "await-async-calls(2)"]`
 - `parsed` — whether the compiler recognized the source
-- `dialect` — `"pi"`, `"opencode"`, `"cloudflare"`, `"tanstack"`, `"vercel"`, `"ptc"`, or `"unknown"`
-- `warnings` — non-fatal problems (e.g. a dropped `@options` line or an unresolved OpenCode/Vercel tool path). Dedup is per pass: `ptc.ts` and `vercel.ts` collapse repeated unresolved-name warnings (per identifier); `opencode.ts` and `cloudflare.ts` report every occurrence
+- `dialect` — `"pi"`, `"opencode"`, `"cloudflare"`, `"tanstack"`, `"vercel"`, `"ptc"`, `"codex"`, or `"unknown"`
+- `warnings` — non-fatal problems (e.g. a dropped `@options` line or an unresolved OpenCode/Vercel tool path). `translate.ts` deduplicates repeated warnings by key: unresolved tool paths / providers are collapsed per identifier or path (so `tools["nope"]` twice yields one warning), and each Codex/PTC helper warns once
 
 Consumers must parse via `readPiCodemodeGuardDetails` and fall back to the inline
 content for unknown versions. The shape is additive-only; `dialect` and unknown
@@ -71,23 +69,43 @@ Passes run in this order and each may be skipped independently:
 1. `strip-code-fence`
 2. `normalize-options-line`
 3. `compile-json-program`
-4. `tanstack-typescript` — only when the dialect is `tanstack`; strips TypeScript syntax via sucrase before `unwrap-iife` can parse it
-5. `vercel-typescript` — only when the dialect is `vercel`; strips TypeScript syntax via sucrase before `unwrap-iife` can parse it
-6. `ptc-typescript` — only when the dialect is `ptc`; strips erasable TypeScript syntax via sucrase before `unwrap-iife` can parse it
-7. `strip-typescript` — generic TypeScript fallback: only when the dialect is `unknown` and acorn cannot parse the script; best-effort sucrase strip, then the dialect is re-detected (never runs after a dialect TypeScript pass already ran)
-8. `unwrap-iife`
-9. `opencode-dialect(N)` — only when `detectCodemodeDialect` returns `opencode`
-10. `cloudflare-dialect(N)` — only when `detectCodemodeDialect` returns `cloudflare`
-11. `tanstack-dialect(N)` — only when the dialect is `tanstack`; rewrites `external_<tool>` bindings to `tools.*`
-12. `vercel-dialect(N)` — only when the dialect is `vercel`; rewrites `tools["raw-name"]` bracket access to `tools.<identifier>` against the live catalog
-13. `ptc-dialect(N)` — only when the dialect is `ptc`; rewrites raw tool names to `tools.<identifier>`, maps `Object.keys(tools)` to `ALL_TOOLS.map((t) => t.name)`, and warns on `ToolCallError` / `await import(...)`
-14. `await-async-calls(N)` — insert missing `await` on `tools.*`/lookup helpers
-15. `rewrite-tool-identifiers` — `tools["a-b"]` → `tools.a_b`; catalog-aware: with `options.tools` given, the written raw name resolves through `resolveToolPath` first, otherwise the naive `toCodemodeIdentifier` is used
+4. `tanstack-typescript` / `vercel-typescript` / `ptc-typescript` — when the detected dialect is `tanstack`, `vercel`, or `ptc`; strips TypeScript syntax via sucrase before `unwrap-iife` can parse it
+5. `strip-typescript` — generic TypeScript fallback: only when the dialect is `unknown` and acorn cannot parse the script; best-effort sucrase strip, then the dialect is re-detected (never runs after a dialect TypeScript pass already ran)
+6. `unwrap-iife`
+7. `translate-statements` — one statement-based pass over every dialect construct, with a `<dialect>-dialect(N)` id per group that fired (`opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, `codex`, `bare`)
+8. `await-async-calls(N)` — insert missing `await` on `tools.*`/lookup helpers
+9. `rewrite-tool-identifiers` — `tools["a-b"]` → `tools.a_b`; catalog-aware: with `options.tools` given, the written raw name resolves through `resolveToolPath` first, otherwise the naive `toCodemodeIdentifier` is used
 
-A JSON program (pass 3) is compiler-generated JavaScript: it skips passes 4–13
-(the dialect passes parse model-written source) and runs only `await-async-calls`
-and `rewrite-tool-identifiers` on the generated script, so raw-JavaScript string
-steps still get awaited and rewritten.
+A JSON program (pass 3) is compiler-generated JavaScript: it skips the statement translation and runs only `await-async-calls` and `rewrite-tool-identifiers` on the generated script, so raw-JavaScript string steps still get awaited and rewritten.
+
+## Statement translation (`translate.ts`)
+
+`compileCodemodeSource` no longer picks one dialect and runs that dialect's
+compiler. After the preamble passes it calls
+`translateCodemode(body, { tools, dialect })`, which parses once and applies
+**every** rule to **every** construct, in one walk. A snippet may therefore mix
+dialects, and each statement is translated by its shape:
+
+- `tools.<ns>.<tool>` → `tools.<identifier>` (OpenCode) — always, when the live catalog confirms the path, otherwise only when the detected dialect is OpenCode (so `tools.read.length` is never flattened)
+- `tools.$codemode.search(...)` → `OPENCODE_SEARCH_SHIM`; other `$codemode.*` warn
+- `codemode.search`/`codemode.describe` → Cloudflare shims; `codemode.run`/`step` and deep `codemode.*` paths warn; `codemode.<tool>` and named providers (`state.writeJson`) → `tools.<identifier>` when the catalog confirms them
+- `external_<tool>` → `tools.<identifier>` (TanStack), scope-aware so a local/parameter binding is left alone
+- `tools["raw-name"]` → `tools.<identifier>` (Vercel/PTC) — only for the vercel/ptc dialect (plain JavaScript brackets are handled by `rewrite-tool-identifiers`, warning-free)
+- `Object.keys(tools)` → `ALL_TOOLS.map((t) => t.name)`; the spelling (`__cm_tool` vs `__ptc_tool`) and the `Object.keys(tools.<ns>)` behavior follow the detected dialect (OpenCode filters, PTC warns)
+- `for...in tools.<ns>` → opencode warning
+- Codex-only helpers (`audio`, `generatedImage`, `notify`, `yield_control`, `setTimeout`, `clearTimeout`) → warnings, guarded by local bindings
+- bare `search(...)` where `search` is a live catalog tool and is not shadowed → `tools.search(...)` (the `bare` group)
+
+The detected `dialect` is still passed in, but only to pick the TypeScript pass,
+to disambiguate the two constructs OpenCode and PTC share (`Object.keys(tools)`
+and unresolved bracket names), and for the interop contract. `compile.ts`
+reports `translate-statements` plus a `<dialect>-dialect(N)` pass id per group
+that fired, so one compile can list several dialect passes.
+
+Apply order and ownership: a single candidate list is collected, then the
+outermost non-overlapping replacements win (an inner `tools.a.b` inside
+`tools.a.b.c` is dropped), and replacements are spliced back to front. Every
+rule is idempotent by shape, so `compile(compile(x)) === compile(x)`.
 
 ## OpenCode dialect (`@opencode-ai/codemode`, https://github.com/anomalyco/opencode/tree/dev/packages/codemode)
 The `tools.<ns>.<tool>` → `tools.<identifier>` mapping needs Pi's live catalog,
@@ -117,7 +135,9 @@ JS globals and locally bound objects are never touched. Cloudflare's
 `toCodemodeIdentifier`, so the catalog is also keyed by the Cloudflare spelling.
 Two known limitations: detection is catalog-free, so a statement-form program
 that uses only named providers (no `codemode.*` call, no async-arrow wrapper)
-detects as `unknown` and the provider rewrites never run; and `unwrap-iife` only
+reports `dialect: unknown` — but the provider rewrite still runs, because
+`translate.ts` applies the Cloudflare rule to every statement when the catalog
+is present; and `unwrap-iife` only
 unwraps a lone **expression** statement, so `export default async () => {}` is
 left in place (it is not an `async-arrow-wrapper` signal either).
 
@@ -186,10 +206,37 @@ outrank the generic `Object.keys(tools)` shape that OpenCode also uses. Vercel
 remains the generic TypeScript fallback, so a PTC program with none of these
 signals is still compiled correctly as `vercel`.
 
+## OpenAI Codex code mode dialect (`codex-rs/code-mode-runtime`)
+OpenAI Codex's `exec` tool runs raw JavaScript in a fresh V8 isolate and exposes
+its tools on a global `tools` object. Its name rule,
+`normalize_code_mode_identifier`, is byte-for-byte Pi's `toCodemodeIdentifier`,
+and its `text`/`image`/`store`/`load`/`exit`/`ALL_TOOLS` helpers match Pi's, so
+already-written tool calls need **no rewriting**:
+
+| Codex | Pi |
+|---|---|
+| `exec({ code })` | `codemode({ code })` |
+| `await tools.mcp__ologs__get_profile(…)` | unchanged (same identifier rule) |
+| `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}`; `yield_time_ms` is dropped with a warning (`options.ts`) |
+| `audio` / `generatedImage` / `notify` / `yield_control` / `setTimeout` / `clearTimeout` | no Pi equivalent — `translate.ts` warns and leaves the call in place |
+
+Codex's `max_output_tokens` maps to Pi's field; `yield_time_ms` is Codex's early
+yield, not Pi's `timeout_ms`, so mapping it would be wrong. `generatedImage`'s
+warning points at Pi's `image(block)`.
+
+Detection signal: `codex:@exec` (from the `hadExecLine` context flag, like
+Pi's `hadOptionsLine`) and `codex:<helper>` for `yield_control`, `notify`,
+`generatedImage`, and `audio`. Codex is checked after OpenCode/TanStack/
+Cloudflare/PTC/Vercel but before Pi's own helper signals, because a Codex script
+also mentions `ALL_TOOLS`/`models`. A Codex script with none of these signals is
+indistinguishable from Pi and is compiled as Pi (which is correct).
+
 ## Known limitations
 - Statement-form Cloudflare programs that use only named providers (no
-  `codemode.*`, no async-arrow wrapper) detect as `unknown`: catalog-free
-  detection cannot see providers, so the provider rewrites never run.
+  `codemode.*`, no async-arrow wrapper) still detect as `unknown`, so the
+  interop `dialect` is inaccurate — but the provider rewrites now run anyway:
+  `translate.ts` applies the Cloudflare rule to every statement, catalog
+  permitting.
 - Non-erasable TypeScript: sucrase compiles `enum`/`namespace` into running
   JavaScript, where DeepSeek's erasable-only PTC reference would reject the
   program.

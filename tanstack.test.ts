@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compileCodemodeSource } from "./compile.ts";
 import { detectCodemodeDialect } from "./dialect.ts";
 import { parseScript } from "./parse.ts";
-import { compileTanstackDialect } from "./tanstack.ts";
+import { compileTanstackDialect } from "./translate.ts";
 
 describe("detectCodemodeDialect: tanstack", () => {
   it("detects bare external_<tool> calls", () => {

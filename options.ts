@@ -15,6 +15,14 @@
 //   // options: {maxOutputTokens: 2000}           (unquoted key, camelCase)
 //   // @options: {"timeout": 30}                  (wrong field name)
 //
+// OpenAI Codex's code mode uses its own pragma with a different field set:
+//
+//   // @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}
+//
+// `max_output_tokens` maps to Pi's field; `yield_time_ms` is a yield hint with
+// no Pi equivalent (Pi streams when the script ends), so it is dropped with a
+// warning rather than misread as `timeout_ms`.
+//
 // The guard rewrites the line into the canonical form, maps the common field
 // aliases, and drops the options entirely when nothing usable remains so an
 // invalid line cannot fail the whole script.
@@ -46,6 +54,9 @@ const TIMEOUT_MS_ALIASES = [
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
+/** Codex `@exec` fields with no Pi equivalent (a yield hint, not a timeout). */
+const YIELD_TIME_ALIASES = ["yield_time_ms", "yieldTimeMs", "yield_time", "yieldTime"] as const;
+
 // Pi only accepts `// @options:` on the first line, but models routinely drop
 // the `@`. The guard still normalizes those — but only when the body is an
 // object literal: `// options: use timeout: 30000` is prose, not a directive,
@@ -54,7 +65,7 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 // warning when it does not parse.
 const COMMENT_PREFIX = "(?:\\/\\/+|#|\\/\\*+|<!--)";
 const DIRECTIVE_AT = new RegExp(
-  `^${COMMENT_PREFIX}\\s*@options?\\b\\s*[:=]?\\s*(.*?)\\s*(?:\\*\\/|-->)?\\s*$`,
+  `^${COMMENT_PREFIX}\\s*@(options?|exec)\\b\\s*[:=]?\\s*(.*?)\\s*(?:\\*\\/|-->)?\\s*$`,
   "i",
 );
 const DIRECTIVE_BARE = new RegExp(
@@ -74,6 +85,8 @@ export interface OptionsSplitResult {
   readonly body: string;
   readonly changed: boolean;
   readonly warnings: readonly string[];
+  /** Which pragma was found: Pi's `@options` or Codex's `@exec`. */
+  readonly directive?: "options" | "exec";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -193,16 +206,25 @@ export function splitOptionsLine(code: string): OptionsSplitResult {
   const lines = code.split("\n");
   let foundIndex = -1;
   let directiveBody = "";
+  let directive: "options" | "exec" = "options";
 
   const scanLimit = Math.min(lines.length, 12);
   for (let index = 0; index < scanLimit; index++) {
     const line = lines[index]!;
     if (line.trim() === "") continue;
     if (!isCommentLine(line)) break;
-    const match = line.match(DIRECTIVE_AT) ?? line.match(DIRECTIVE_BARE);
-    if (match) {
+    const at = line.match(DIRECTIVE_AT);
+    if (at) {
       foundIndex = index;
-      directiveBody = match[1] ?? "";
+      directive = (at[1] ?? "").toLowerCase() === "exec" ? "exec" : "options";
+      directiveBody = at[2] ?? "";
+      break;
+    }
+    const bare = line.match(DIRECTIVE_BARE);
+    if (bare) {
+      foundIndex = index;
+      directive = "options";
+      directiveBody = bare[1] ?? "";
       break;
     }
   }
@@ -214,22 +236,24 @@ export function splitOptionsLine(code: string): OptionsSplitResult {
 
   const parsedObject = parseLooseOptionsObject(directiveBody);
   const options = parsedObject ? mapCodemodeOptions(parsedObject) : undefined;
+  const warnings: string[] = [];
+  if (directive === "exec" && parsedObject && YIELD_TIME_ALIASES.some((key) => key in parsedObject)) {
+    warnings.push("dropped `yield_time_ms` from the @exec pragma; Pi streams output when the script ends");
+  }
 
   if (!options) {
     // Neutralize the line instead of removing it, so the number of lines stays
     // close to the original and nothing silently disappears.
-    withoutLine.splice(foundIndex, 0, "// pi-codemode-guard: ignored an unparseable @options line");
-    return {
-      body: withoutLine.join("\n"),
-      changed: true,
-      warnings: ["removed an @options line that pi would reject"],
-    };
+    withoutLine.splice(foundIndex, 0, `// pi-codemode-guard: ignored an unparseable @${directive} line`);
+    warnings.push(`removed an @${directive} line that pi would reject`);
+    return { body: withoutLine.join("\n"), changed: true, warnings, directive };
   }
 
   return {
     body: withoutLine.join("\n"),
     optionsLine: formatOptionsLine(options),
     changed: true,
-    warnings: [],
+    warnings,
+    directive,
   };
 }

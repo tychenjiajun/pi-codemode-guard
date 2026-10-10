@@ -55,6 +55,8 @@ text(`${a.length} + ${b.length} bytes`);
 | `const hits = searchTools("x");` | promise serialized as `{}` (pi issue #10555) | `await-async-calls` |
 | `const r = tools.bash({ command: "ls" });` | unawaited promise, results never used | `await-async-calls` |
 | `tools["mcp__dev-radius__search"]({…})` | bracket access with the raw name, or a syntax error for `-` | `rewrite-tool-identifiers` (and `vercel-dialect` for Vercel source) |
+| `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | Codex's pragma, not Pi's | `normalize-options-line` (`max_output_tokens` kept, `yield_time_ms` dropped with a warning) |
+| `search({ q })` for a live tool named `search` | Pi tools are addressed as `tools.<identifier>` | `bare-tool-calls` (statement translation) |
 
 The three observed real-world failures this extension exists for:
 
@@ -196,7 +198,7 @@ channels and are Pi-compatible.
 Model-written calls use `await tools.name(args)`, with quoted access
 `tools["my-tool"](args)` for exotic names, whereas Pi uses `tools.<identifier>`
 with every invalid character replaced by `_` —
-`compilePtcDialect(code, { tools })` (see `ptc.ts`) rewrites them against the
+`compilePtcDialect(code, { tools })` (see `translate.ts`) rewrites them against the
 live catalog. Failed tool calls in PTC reject with `ToolCallError` (a PTC-only
 global with `.toolName`); Pi has no equivalent (a failed call rejects with a
 plain `Error`). PTC reaches Node APIs with `await import(...)`, while Pi's
@@ -210,6 +212,31 @@ QuickJS sandbox has no `import`, `fetch`, or Node APIs. The pipeline runs
 outrank the generic `Object.keys(tools)` shape that OpenCode also uses. Vercel
 remains the generic TypeScript fallback, so a PTC program with none of these
 signals is still compiled correctly as `vercel`.
+
+## OpenAI Codex code mode (`codex-rs/code-mode-runtime`)
+
+OpenAI Codex's code mode runs its `exec` tool as a raw JavaScript program in a
+fresh V8 isolate (`codex-rs/code-mode-runtime/src/runtime/globals.rs`). Its
+program API is deliberately close to Pi's:
+
+| Codex | Pi codemode |
+|---|---|
+| `exec({ code })` | `codemode({ code })` |
+| `await tools.mcp__ologs__get_profile(…)` | unchanged — `normalize_code_mode_identifier` is exactly `toCodemodeIdentifier` |
+| `text` / `image` / `store` / `load` / `exit` / `ALL_TOOLS` | unchanged |
+| `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}` |
+| `audio` / `generatedImage` / `notify` / `yield_control` / `setTimeout` / `clearTimeout` | no Pi equivalent — warning, left in place |
+
+`yield_time_ms` is Codex's early-yield hint, not Pi's `timeout_ms`, so it is
+dropped with a warning instead of being mapped. `generatedImage`'s warning points
+at Pi's `image(block)`. Codex deletes `console` in its isolate, but Pi has
+`console`, so `console.log(...)` passes through.
+
+**Detection.** `codex:@exec` (from the `hadExecLine` context flag) and
+`codex:<helper>` for `yield_control`, `notify`, `generatedImage`, and `audio`.
+Checked after OpenCode/TanStack/Cloudflare/PTC/Vercel and before Pi's own helper
+signals. A Codex script with no `@exec` and no Codex-only helper is
+indistinguishable from Pi, and compiling it as Pi is correct.
 
 ## Pipeline (high level)
 
@@ -229,18 +256,12 @@ tool_call event (index.ts)
     1 strip-code-fence
     2 normalize-options-line
     3 compile-json-program
-    4 tanstack-typescript   (only when the dialect is tanstack: strip TypeScript syntax)
-    5 vercel-typescript     (only when the dialect is vercel: strip TypeScript syntax)
-    6 ptc-typescript        (only when the dialect is ptc: strip TypeScript syntax)
-    7 strip-typescript      (only when the dialect is unknown and acorn cannot parse: generic TS fallback, then re-detect)
-    8 unwrap-iife
-    9 opencode-dialect      (only when the dialect is opencode)
-   10 cloudflare-dialect    (only when the dialect is cloudflare)
-   11 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
-   12 vercel-dialect        (only when the dialect is vercel: tools["raw-name"] -> tools.<identifier>)
-   13 ptc-dialect           (only when the dialect is ptc: raw tool names -> tools.<identifier>, Object.keys(tools) -> ALL_TOOLS)
-   14 await-async-calls
-   15 rewrite-tool-identifiers   (catalog-aware: resolves the written raw name against `tools` first)
+    4 tanstack/vercel/ptc-typescript  (only when the dialect is tanstack, vercel, or ptc: strip TypeScript syntax)
+    5 strip-typescript      (only when the dialect is unknown and acorn cannot parse: generic TS fallback, then re-detect)
+    6 unwrap-iife
+    7 translate-statements  (one statement-based pass: every dialect construct, by shape)
+    8 await-async-calls
+    9 rewrite-tool-identifiers   (catalog-aware: resolves the written raw name against `tools` first)
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -249,8 +270,17 @@ codemode sandbox executes the script
 tool_result event → details.piCodemodeGuard + compile receipt
 ```
 
-A JSON program (pass 3) is compiler-generated JavaScript: it skips passes 4–13
-and runs only `await-async-calls` and `rewrite-tool-identifiers` on the result.
+Statement translation (`translate.ts`) replaced the old single-dialect branch.
+`compileCodemodeSource` still calls `detectCodemodeDialect` once, but only to
+pick the TypeScript pass, to disambiguate the two constructs OpenCode and PTC
+share (`Object.keys(tools)`, unresolved bracket names), and to fill the interop
+`dialect`. Every other rewrite is applied to every statement, so a snippet that
+mixes dialects is fully translated. `passes` reports `translate-statements` plus
+a `<dialect>-dialect(N)` id for each group that fired.
+
+A JSON program (pass 3) is compiler-generated JavaScript: it skips statement
+translation and runs only `await-async-calls` and `rewrite-tool-identifiers` on
+the result.
 
 ## Why some things are deliberately *not* fixed
 
@@ -273,7 +303,10 @@ and runs only `await-async-calls` and `rewrite-tool-identifiers` on the result.
 - **tool_call event** — pi event fired after validation; `event.input` is
   mutable and is not re-validated.
 - **pass** — one best-effort compiler transformation, identified in `passes`.
-- **dialect** — `pi`, `opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, or `unknown`; OpenCode is the
+  `translate-statements` is a single pass that can emit several
+  `<dialect>-dialect(N)` ids (one per rule group that fired).
+- **dialect** — `pi`, `opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`,
+  `codex`, or `unknown`; OpenCode is the
   `@opencode-ai/codemode` program API (nested tool paths, `$codemode.search`),
   Cloudflare is the `@cloudflare/codemode` API (`codemode.*`, named providers,
   bare `async () => { … }` wrapper), TanStack is `@tanstack/ai-code-mode`
@@ -281,13 +314,17 @@ and runs only `await-async-calls` and `rewrite-tool-identifiers` on the result.
   `@ai-sdk/code-mode` (`{ js }` envelope, TypeScript source, bracket access
   `tools["raw-name"]`), DeepSeek Harness PTC is
   `@deepseek-ai/dsh-ptc-runtime-node` (`run_code({ description, code })`,
-  global `tools` with arbitrary raw names, TypeScript source). Detection runs as
-  `detectCodemodeDialect(code, { hadOptionsLine })` — the flag restores the
-  `@options` signal that `normalize-options-line` removed.
+  global `tools` with arbitrary raw names, TypeScript source), and OpenAI Codex
+  is `codex-rs/code-mode-runtime` (`exec({ code })`, `// @exec:` pragma,
+  Codex-only helpers, Pi-identical tool identifiers). Detection runs as
+  `detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` — the flags
+  restore the pragma signals that `normalize-options-line` removed. Since
+  translation is statement-based, `dialect` is a report, not what gates the
+  rewrites.
 - **catalog** — the Pi tool names (`pi.getAllTools()`), passed into the compiler
-  as data so catalog-aware passes (OpenCode namespace paths, Vercel/PTC raw
-  names, `rewrite-tool-identifiers` bracket access) can collapse them to Pi's
-  flat identifiers.
+  as data so catalog-aware rules in `translate.ts` (OpenCode namespace paths,
+  Vercel/PTC raw names, Cloudflare providers, bare tool calls) and
+  `rewrite-tool-identifiers` can collapse them to Pi's flat identifiers.
 - **pending compilation record** — the `tool_call` → `tool_result` pairing kept
   in `index.ts`, capped at 32 FIFO entries (`MAX_PENDING_RECORDS`) so a turn
   aborted between the events cannot leak memory; a late result for an evicted
