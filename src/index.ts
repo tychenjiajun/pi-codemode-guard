@@ -119,7 +119,11 @@ function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
 export default function codemodeGuardExtension(pi: ExtensionAPI): void {
   // Replace the built-in codemode tool with a guarded copy. Registering
   // `codemode` during load also makes pi drop its replaceable built-in
-  // codemode extension, so the tool is registered exactly once.
+  // codemode extension, so the tool is registered exactly once. On pi >= 1.1.0
+  // that drop is reported at startup as "built-in extension `codemode` was not
+  // loaded"; it is harmless (this guarded copy is the registered tool) and can
+  // be silenced by disabling the built-in in settings
+  // (`"extensions": ["-builtin:codemode"]`) or `pi config`.
   createCodemodeExtension()(createGuardedCodemodeApi(pi));
 
   const records = new Map<string, CompilationRecord>();

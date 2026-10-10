@@ -70,12 +70,16 @@ Root files:
 ## Why a tool proxy instead of an override
 `prepareArguments` runs **before** pi validates tool arguments, so it is the only
 place that can rescue a raw string, an alias field, or a JSON program. The
-built-in codemode tool is registered by a **replaceable** inline extension, and
-pi drops that extension when another extension registers a tool named
-`codemode` during load. Reimplementing the tool would lose `models`, `store()`
-persistence, and `codemode.mode`, so the guard instead runs the canonical
-`createCodemodeExtension()` factory through a small proxy that augments the
-definition. Keep it that way: do not fork the codemode implementation.
+built-in codemode tool is registered by a **replaceable** extension (in the CLI,
+`builtin: true, replaceable: true`), and pi drops that extension when another
+extension registers a tool named `codemode` during load. On pi ≥ 1.1.0 that drop
+emits a startup warning (``built-in extension `codemode` was not loaded``); it is
+cosmetic — the guard's own `codemode` tool is the registered one — but users can
+silence it with `"extensions": ["-builtin:codemode"]`. Reimplementing the tool
+would lose `models`, `store()` persistence, and `codemode.mode`, so the guard
+instead runs the canonical `createCodemodeExtension()` factory through a small
+proxy that augments the definition. Keep it that way: do not fork the codemode
+implementation.
 
 ## Interop Contract
 `details.piCodemodeGuard` (see `contract.ts`) is published on every codemode

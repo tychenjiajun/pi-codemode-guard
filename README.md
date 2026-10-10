@@ -352,10 +352,20 @@ granted).
 It works both with the CLI's built-in codemode extension (which it replaces) and
 in SDK sessions that add `createCodemodeExtension()`.
 
+> **Startup warning on pi ≥ 1.1.0.** Registering a tool named `codemode` makes
+> pi leave out its replaceable built-in `codemode` extension and print
+> ``Extension … registers tool `codemode`, so built-in extension `codemode` was
+> not loaded``. The guard *is* that replacement — `codemode` still works — but to
+> silence the message, disable the built-in copy: add
+> `"extensions": ["-builtin:codemode"]` to `~/.pi/agent/settings.json` (or
+> uncheck `codemode` under **Built-in** in `pi config`). If the guard is later
+> removed, re-enable the built-in so `codemode` keeps working.
+
 ## How it stays compatible
 
-The built-in `codemode` tool is registered by a **replaceable** inline
-extension, and reimplementing it would lose `models`, `store()` persistence, and
+The built-in `codemode` tool is registered by an extension that pi marks
+**replaceable** (`builtin: true, replaceable: true` in the CLI), and
+reimplementing it would lose `models`, `store()` persistence, and
 `codemode.mode`. Instead the guard runs the canonical
 `createCodemodeExtension()` factory through a small `pi` proxy whose
 `registerTool` adds the argument shim and a compile receipt. The tool keeps
@@ -420,7 +430,10 @@ suite.
 
 It re-registers the canonical `createCodemodeExtension()` factory through a
 small proxy, keeping the original schema, `models`, `store()` persistence, and
-`codemode.mode` — so it coexists with, rather than forks, the built-in tool.
+`codemode.mode` — so it coexists with, rather than forks, the built-in tool. It
+replaces the built-in registration, so disable the built-in copy
+(`"extensions": ["-builtin:codemode"]`) if you want pi to stop warning about
+the replacement.
 
 ## Development
 

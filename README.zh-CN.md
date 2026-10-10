@@ -315,9 +315,18 @@ pi -e /path/to/pi-codemode-guard
 它既适用于 CLI 内置的 codemode 扩展（会被它替换），
 也适用于自行添加 `createCodemodeExtension()` 的 SDK 会话。
 
+> **pi ≥ 1.1.0 的启动警告。** 由于本扩展注册了名为 `codemode` 的工具，pi 会跳过
+> 其可替换的内置 `codemode` 扩展并打印 ``Extension … registers tool `codemode`,
+> so built-in extension `codemode` was not loaded``。本扩展正是那个替代者 ——
+> `codemode` 仍然可用 —— 若要消除该提示，请禁用内置副本：在
+> `~/.pi/agent/settings.json` 中加入 `"extensions": ["-builtin:codemode"]`
+> （或在 `pi config` 的 **Built-in** 中取消勾选 `codemode`）。如果之后卸载了本扩展，
+> 请重新启用内置扩展，以免 `codemode` 消失。
+
 ## 如何保持兼容
 
-内置的 `codemode` 工具由一个**可替换的**内联扩展注册，重新实现它会丢失 `models`、
+内置的 `codemode` 工具由一个被 pi 标记为**可替换**的扩展注册（CLI 中为
+`builtin: true, replaceable: true`），重新实现它会丢失 `models`、
 `store()` 持久化和 `codemode.mode`。本扩展的做法是让规范的
 `createCodemodeExtension()` 工厂通过一个小型 `pi` 代理运行，由其 `registerTool`
 追加参数垫片和编译回执。工具仍然保持 `parameters === codemodeSchema`
@@ -373,7 +382,8 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 它通过一个小代理重新注册规范的 `createCodemodeExtension()` 工厂，保留原始 schema、
 `models`、`store()` 持久化和 `codemode.mode` —— 因此它是与内置工具共存，
-而不是 fork 内置工具。
+而不是 fork 内置工具。它替换了内置注册，因此若想不再收到替换警告，
+请禁用内置副本（`"extensions": ["-builtin:codemode"]`）。
 
 ## 开发
 
