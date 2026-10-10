@@ -43,4 +43,22 @@ describe("rewriteToolIdentifiers", () => {
   it("returns undefined when the script does not parse", () => {
     expect(rewriteToolIdentifiers("const = ;")).toBeUndefined();
   });
+
+  it("resolves bracket access against the tool catalog", () => {
+    const result = rewriteToolIdentifiers('tools["mcp.dev.radius.search"]({ q: 1 });', ["mcp__dev_radius_search"]);
+    expect(result?.code).toBe("tools.mcp__dev_radius_search({ q: 1 });");
+    expect(result?.changed).toBe(true);
+  });
+
+  it("falls back to the naive identifier when the catalog cannot resolve the name", () => {
+    const withCatalog = rewriteToolIdentifiers('tools["a-b"]({});', ["read"]);
+    const withoutCatalog = rewriteToolIdentifiers('tools["a-b"]({});');
+    expect(withCatalog?.code).toBe('tools.a_b({});');
+    expect(withCatalog?.code).toBe(withoutCatalog?.code);
+  });
+
+  it("keeps models access naive when a catalog is given", () => {
+    const result = rewriteToolIdentifiers('models["getModelsOfType"]("classifier");', ["read"]);
+    expect(result?.code).toBe('models.getModelsOfType("classifier");');
+  });
 });

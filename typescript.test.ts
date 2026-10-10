@@ -41,4 +41,34 @@ describe("stripTypeScriptSyntax", () => {
     expect(result.code).toBe("const = ;");
     expect(result.warnings.length).toBeGreaterThan(0);
   });
+
+  it("does not truncate a script that contains the wrapper end marker literally", () => {
+    const input =
+      "const o = { a: 1 };\n" +
+      'const marker = "___PI_GUARD_TS_WRAPPER_END___";\n' +
+      "const y: number = 2;\n" +
+      "return marker + y;";
+    const result = stripTypeScriptSyntax(input);
+    expect(result.warnings).toEqual([]);
+    expect(result.changed).toBe(true);
+    expect(result.code).toContain("const o = { a: 1 };");
+    expect(result.code).toContain("return marker + y;");
+    expect(result.code).not.toContain(": number");
+    expect(result.code).toContain('"___PI_GUARD_TS_WRAPPER_END___"');
+    // Idempotent: the stripped output survives a second pass intact.
+    const again = stripTypeScriptSyntax(result.code);
+    expect(again.changed).toBe(false);
+    expect(again.code).toBe(result.code);
+  });
+
+  it("does not truncate a script that contains the wrapper start marker literally", () => {
+    const input =
+      'const fn = "async function ___PI_GUARD_TS_WRAPPER_START___() {}";\n' +
+      "const y: number = 2;\n" +
+      "return y;";
+    const result = stripTypeScriptSyntax(input);
+    expect(result.warnings).toEqual([]);
+    expect(result.code).toContain("return y;");
+    expect(result.code).not.toContain(": number");
+  });
 });

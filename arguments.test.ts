@@ -83,6 +83,32 @@ describe("coerceCodemodeArguments", () => {
     expect(() => coerceCodemodeArguments(42)).toThrow(CodemodeArgumentError);
     expect(() => coerceCodemodeArguments({ code: 42 })).toThrow(CodemodeArgumentError);
   });
+
+  it("lets a tool-call envelope win over alias fields", () => {
+    const result = coerceCodemodeArguments({ tool: "bash", input: "ls -la" });
+    expect(result.kind).toBe("tool-call");
+    expect(result.code).toContain('await tools.bash({"command":"ls -la"})');
+    expect(result.code).not.toBe("ls -la");
+  });
+
+  it("lets a tool-call envelope win over nested-source aliases", () => {
+    const result = coerceCodemodeArguments({ tool: "write", input: { path: "a.txt", content: "hello" } });
+    expect(result.kind).toBe("tool-call");
+    expect(result.code).toContain('await tools.write({"path":"a.txt","content":"hello"})');
+    expect(result.code).not.toBe("hello");
+  });
+
+  it("still reads a nested source object from a lone alias field", () => {
+    const result = coerceCodemodeArguments({ input: { language: "javascript", content: "return 1;" } });
+    expect(result.kind).toBe("nested-code");
+    expect(result.code).toBe("return 1;");
+  });
+
+  it("still reads a program field that the single-key shorthand would swallow", () => {
+    const result = coerceCodemodeArguments({ tool_calls: [{ tool: "read", args: { path: "a" } }] });
+    expect(result.kind).toBe("tool-program");
+    expect(result.code).toContain("await tools.read");
+  });
 });
 
 describe("normalizeCodemodeArguments", () => {

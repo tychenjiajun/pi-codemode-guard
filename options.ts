@@ -46,7 +46,21 @@ const TIMEOUT_MS_ALIASES = [
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
-const DIRECTIVE = /^(?:\/\/+|#|\/\*+|<!--)\s*(?:@options?\b|options?\s*[:={])\s*[:=]?\s*(.*?)\s*(?:\*\/|-->)?\s*$/i;
+// Pi only accepts `// @options:` on the first line, but models routinely drop
+// the `@`. The guard still normalizes those — but only when the body is an
+// object literal: `// options: use timeout: 30000` is prose, not a directive,
+// and must pass through untouched. The `@` form is always taken as a
+// directive (pi would reject the script otherwise) and neutralized with a
+// warning when it does not parse.
+const COMMENT_PREFIX = "(?:\\/\\/+|#|\\/\\*+|<!--)";
+const DIRECTIVE_AT = new RegExp(
+  `^${COMMENT_PREFIX}\\s*@options?\\b\\s*[:=]?\\s*(.*?)\\s*(?:\\*\\/|-->)?\\s*$`,
+  "i",
+);
+const DIRECTIVE_BARE = new RegExp(
+  `^${COMMENT_PREFIX}\\s*options?\\s*[:={]?\\s*(\\{.*?)\\s*(?:\\*\\/|-->)?\\s*$`,
+  "i",
+);
 
 export interface ParsedCodemodeOptions {
   readonly maxOutputTokens?: number;
@@ -123,7 +137,9 @@ function asPositiveInteger(value: unknown): number | undefined {
 
 /**
  * Map the aliases of an options object to pi's fields. Returns `undefined` when
- * no recognized field survives.
+ * no recognized field survives. A present-but-invalid value falls through to
+ * the next alias (`{"max_output_tokens": "abc", "maxTokens": 500}` keeps the
+ * 500) instead of dropping the whole line.
  */
 export function mapCodemodeOptions(fields: Record<string, unknown>): ParsedCodemodeOptions | undefined {
   const options: { maxOutputTokens?: number; timeoutMs?: number } = {};
@@ -131,14 +147,18 @@ export function mapCodemodeOptions(fields: Record<string, unknown>): ParsedCodem
   for (const key of MAX_OUTPUT_TOKENS_ALIASES) {
     if (!(key in fields)) continue;
     const value = asPositiveInteger(fields[key]);
-    if (value !== undefined) options.maxOutputTokens = value;
+    if (value === undefined) continue; // invalid for this alias; try the next
+    options.maxOutputTokens = value;
     break;
   }
 
   for (const key of TIMEOUT_MS_ALIASES) {
     if (!(key in fields)) continue;
     const value = asPositiveInteger(fields[key]);
-    if (value !== undefined && value > 0 && value <= MAX_TIMEOUT_MS) options.timeoutMs = value;
+    // Pi requires a positive integer up to 2147483647 (0 is rejected there),
+    // so mirror that and keep looking at the remaining aliases.
+    if (value === undefined || value === 0 || value > MAX_TIMEOUT_MS) continue;
+    options.timeoutMs = value;
     break;
   }
 
@@ -179,7 +199,7 @@ export function splitOptionsLine(code: string): OptionsSplitResult {
     const line = lines[index]!;
     if (line.trim() === "") continue;
     if (!isCommentLine(line)) break;
-    const match = line.match(DIRECTIVE);
+    const match = line.match(DIRECTIVE_AT) ?? line.match(DIRECTIVE_BARE);
     if (match) {
       foundIndex = index;
       directiveBody = match[1] ?? "";

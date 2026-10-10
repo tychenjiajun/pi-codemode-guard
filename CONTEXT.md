@@ -50,6 +50,7 @@ text(`${a.length} + ${b.length} bytes`);
 | ` ```js … ``` ` fences, sometimes with prose | fences are not valid JavaScript | `strip-code-fence` |
 | `// @options {"max_output_tokens": 2000}` (no colon) | not the exact `// @options:` prefix | `normalize-options-line` |
 | `/* @options: {'maxOutputTokens': 2000} */` | block comment + single quotes + camelCase field | `normalize-options-line` |
+| `const n: number = 1;` as a whole script (no dialect claimed it) | acorn cannot parse TypeScript | `strip-typescript` (generic fallback, then re-detect the dialect) |
 | `(async () => { … })();` | redundant wrapper; unawaited it may never run | `unwrap-iife` |
 | `const hits = searchTools("x");` | promise serialized as `{}` (pi issue #10555) | `await-async-calls` |
 | `const r = tools.bash({ command: "ls" });` | unawaited promise, results never used | `await-async-calls` |
@@ -83,6 +84,8 @@ different program API. `detectCodemodeDialect` flags it from `$codemode`, a
 | `tools.mcp.dev.radius.search({ query })` | `tools.mcp__dev_radius__search({ query })` |
 | `await tools.$codemode.search({ query, namespace, limit, offset })` | `await searchTools(...)` shim returning `{ items: [{ path, description, signature }], remaining, next }` |
 | `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
+| `Object.keys(tools.<ns>)` | the same name list filtered by the namespace's identifier prefix (plain and `mcp__` spellings) |
+| `for...in tools.<ns>` | not rewritten — warns and is left as is |
 
 Compatible already, so untouched: `return value`, `console.log` (Pi uses
 `<console_output>`; OpenCode collects `logs`), `Promise.all`/`allSettled`/`race`,
@@ -90,8 +93,8 @@ and top-level `await`. OpenCode forbids `.then/.catch/.finally`; Pi allows them,
 so OpenCode → Pi is a superset.
 
 Name resolution needs Pi's live catalog: the extension passes
-`pi.getAllTools().map((t) => t.name)`. Exact separators are tried first, then a
-fuzzy `normalizeToolKey` match (`mcp.dev.radius.search` ↔
+`pi.getAllTools().map((t) => t.name)`. Exact separators are tried first (each
+also tried under the MCP `mcp__` prefix), then a fuzzy `normalizeToolKey` match (`mcp.dev.radius.search` ↔
 `mcp__dev-radius__search`), then a deterministic flatten plus a `warning`.
 
 ## Cloudflare dialect (`@cloudflare/codemode`, https://github.com/cloudflare/agents/tree/main/packages/codemode)
@@ -173,8 +176,9 @@ priority.
 
 DeepSeek's harness PTC mode (`deepseek-ai/deepseek-harness`,
 packages/ptc-runtime/ptc-runtime-node) exposes a `run_code({ description, code })`
-tool. Pi's codemode tool takes `{ code }`, so the extra `description` field is
-dropped by the argument-normalization shim. `code` is the body of an async
+tool. Pi's codemode tool takes `{ code }`; the argument-normalization shim reads
+only `code` (or an alias field), so the extra `description` field is ignored.
+`code` is the body of an async
 TypeScript function (erasable TypeScript only), so top-level `await`/`return`
 work. Host functions are exposed as a global `tools` object whose function
 names are arbitrary strings; `console.log(...)` and `return` are PTC's output
@@ -182,7 +186,7 @@ channels and are Pi-compatible.
 
 | DeepSeek PTC | Pi codemode |
 |---|---|
-| `{ code, description }` | `{ code }` (description dropped) |
+| `{ code, description }` | `{ code }` (`description` ignored) |
 | `await tools["web-search"]({ q })` | `await tools.web_search({ q })` — resolved against the live catalog |
 | `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
 | `const c: string = "London";` | `const c = "London";` — TypeScript stripped via sucrase |
@@ -228,14 +232,15 @@ tool_call event (index.ts)
     4 tanstack-typescript   (only when the dialect is tanstack: strip TypeScript syntax)
     5 vercel-typescript     (only when the dialect is vercel: strip TypeScript syntax)
     6 ptc-typescript        (only when the dialect is ptc: strip TypeScript syntax)
-    7 unwrap-iife
-    8 opencode-dialect      (only when the dialect is opencode)
-    9 cloudflare-dialect    (only when the dialect is cloudflare)
-   10 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
-   11 vercel-dialect        (only when the dialect is vercel: tools["raw-name"] -> tools.<identifier>)
-   12 ptc-dialect           (only when the dialect is ptc: raw tool names -> tools.<identifier>, Object.keys(tools) -> ALL_TOOLS)
-   13 await-async-calls
-   14 rewrite-tool-identifiers
+    7 strip-typescript      (only when the dialect is unknown and acorn cannot parse: generic TS fallback, then re-detect)
+    8 unwrap-iife
+    9 opencode-dialect      (only when the dialect is opencode)
+   10 cloudflare-dialect    (only when the dialect is cloudflare)
+   11 tanstack-dialect      (only when the dialect is tanstack: external_<tool> -> tools.*)
+   12 vercel-dialect        (only when the dialect is vercel: tools["raw-name"] -> tools.<identifier>)
+   13 ptc-dialect           (only when the dialect is ptc: raw tool names -> tools.<identifier>, Object.keys(tools) -> ALL_TOOLS)
+   14 await-async-calls
+   15 rewrite-tool-identifiers   (catalog-aware: resolves the written raw name against `tools` first)
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -243,6 +248,9 @@ codemode sandbox executes the script
         ▼
 tool_result event → details.piCodemodeGuard + compile receipt
 ```
+
+A JSON program (pass 3) is compiler-generated JavaScript: it skips passes 4–13
+and runs only `await-async-calls` and `rewrite-tool-identifiers` on the result.
 
 ## Why some things are deliberately *not* fixed
 
@@ -273,8 +281,19 @@ tool_result event → details.piCodemodeGuard + compile receipt
   `@ai-sdk/code-mode` (`{ js }` envelope, TypeScript source, bracket access
   `tools["raw-name"]`), DeepSeek Harness PTC is
   `@deepseek-ai/dsh-ptc-runtime-node` (`run_code({ description, code })`,
-  global `tools` with arbitrary raw names, TypeScript source).
-- **catalog** — the Pi tool names (`pi.getAllTools()`), needed to collapse an
-  OpenCode namespace path to Pi's flat identifier.
+  global `tools` with arbitrary raw names, TypeScript source). Detection runs as
+  `detectCodemodeDialect(code, { hadOptionsLine })` — the flag restores the
+  `@options` signal that `normalize-options-line` removed.
+- **catalog** — the Pi tool names (`pi.getAllTools()`), passed into the compiler
+  as data so catalog-aware passes (OpenCode namespace paths, Vercel/PTC raw
+  names, `rewrite-tool-identifiers` bracket access) can collapse them to Pi's
+  flat identifiers.
+- **pending compilation record** — the `tool_call` → `tool_result` pairing kept
+  in `index.ts`, capped at 32 FIFO entries (`MAX_PENDING_RECORDS`) so a turn
+  aborted between the events cannot leak memory; a late result for an evicted
+  call goes unstamped.
+- **guard status footer** — `showGuardStatus(...)` in `ui.ts`: a transient
+  footer status that only runs in TUI mode (`ctx.mode === "tui"` with `ctx.ui`
+  present) and clears itself after a few seconds.
 - **guard details** — `details.piCodemodeGuard`, the versioned record of what
   the compiler changed.

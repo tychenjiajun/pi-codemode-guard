@@ -56,6 +56,7 @@ export function compileVercelDialect(
   if (collectBoundNames(ast).has("tools")) return { code, changed: false, rewrites: 0, warnings: [] };
   const replacements: Replacement[] = [];
   const warnings: string[] = [];
+  const warned = new Set<string>();
   let rewrites = 0;
 
   walk(ast, [], (node) => {
@@ -67,7 +68,12 @@ export function compileVercelDialect(
 
     const raw = property.value;
     const resolution = resolveToolPath([raw], catalog);
-    if (resolution.matched === undefined && names.length > 0) {
+    if (
+      resolution.matched === undefined &&
+      names.length > 0 &&
+      !warned.has(`unresolved:${resolution.identifier}`)
+    ) {
+      warned.add(`unresolved:${resolution.identifier}`);
       warnings.push(
         `could not resolve Vercel tool \`${raw}\` in the Pi catalog; mapped to \`tools.${resolution.identifier}\``,
       );

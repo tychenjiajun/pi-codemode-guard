@@ -40,6 +40,16 @@ interface CompilationRecord {
   readonly result: CompileResult;
 }
 
+/**
+ * Upper bound on pending compilation records. Records are deleted on
+ * `tool_result`, but a turn that aborts between `tool_call` and `tool_result`
+ * (abort, crash, dropped result) would otherwise leak its entry for the whole
+ * session. The map is kept FIFO-bounded: beyond this cap the oldest
+ * (first-inserted) record is evicted, so leaks cost a bounded amount of memory
+ * and a late result for an evicted call simply goes unstamped.
+ */
+const MAX_PENDING_RECORDS = 32;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -122,6 +132,17 @@ export default function codemodeGuardExtension(pi: ExtensionAPI): void {
 
   const records = new Map<string, CompilationRecord>();
 
+  // FIFO-bounded insert: evict the oldest entries past MAX_PENDING_RECORDS so
+  // abandoned calls (tool_call without tool_result) cannot grow the map forever.
+  const remember = (toolCallId: string, record: CompilationRecord): void => {
+    records.set(toolCallId, record);
+    while (records.size > MAX_PENDING_RECORDS) {
+      const oldest = records.keys().next();
+      if (oldest.done) break;
+      records.delete(oldest.value);
+    }
+  };
+
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "codemode") return;
 
@@ -138,9 +159,14 @@ export default function codemodeGuardExtension(pi: ExtensionAPI): void {
     }
     if (!result.changed && result.warnings.length === 0) return;
 
-    records.set(event.toolCallId, { originalCode: code, result });
+    remember(event.toolCallId, { originalCode: code, result });
     input.code = result.code;
-    notifyCompiled(ctx, result);
+    try {
+      notifyCompiled(ctx, result);
+    } catch {
+      // The compile already happened and the script is in place; a UI failure
+      // (setStatus/notify throwing) must never block the tool either.
+    }
   });
 
   pi.on("tool_result", async (event) => {

@@ -24,7 +24,8 @@
 // Without a catalog the pass still runs, with a best-effort flatten and a
 // warning.
 
-import { buildCatalog, collectChain, resolveToolPath, walk, type Replacement } from "./catalog.ts";
+import { buildCatalog, collectBoundNames, collectChain, resolveToolPath, walk, type Replacement } from "./catalog.ts";
+import { toCodemodeIdentifier } from "./identifiers.ts";
 import { parseScript, type AstNode } from "./parse.ts";
 
 export { detectCodemodeDialect } from "./dialect.ts";
@@ -43,13 +44,14 @@ export interface OpencodeCompileResult {
   readonly warnings: readonly string[];
 }
 
-/** A runtime shim for `tools.$codemode.search(...)`, matching OpenCode's result shape. */
+/** A runtime shim for `tools.$codemode.search(...)`, matching OpenCode's result shape.
+ * Fetches one extra result so `remaining`/`next` stay live past a capped page. */
 export const OPENCODE_SEARCH_SHIM = `(async (__cm_req) => {
   const __cm_query = __cm_req?.query ?? "";
   const __cm_namespace = __cm_req?.namespace;
   const __cm_offset = __cm_req?.offset ?? 0;
   const __cm_limit = __cm_req?.limit ?? 10;
-  const __cm_found = (await searchTools(__cm_query, { limit: __cm_offset + __cm_limit, ...(__cm_namespace === undefined ? {} : { namespace: __cm_namespace }) })) ?? [];
+  const __cm_found = (await searchTools(__cm_query, { limit: __cm_offset + __cm_limit + 1, ...(__cm_namespace === undefined ? {} : { namespace: __cm_namespace }) })) ?? [];
   const __cm_expr = (__cm_name) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(__cm_name) ? "tools." + __cm_name : "tools[" + JSON.stringify(__cm_name) + "]";
   const __cm_items = __cm_found.slice(__cm_offset, __cm_offset + __cm_limit).map((__cm_tool) => ({ path: __cm_expr(__cm_tool.name), description: __cm_tool.description, signature: __cm_expr(__cm_tool.name) }));
   const __cm_remaining = Math.max(0, __cm_found.length - __cm_offset - __cm_items.length);
@@ -57,6 +59,27 @@ export const OPENCODE_SEARCH_SHIM = `(async (__cm_req) => {
 })`;
 
 const OBJECT_KEYS_SHIM = "ALL_TOOLS.map((__cm_tool) => __cm_tool.name)";
+
+/** `Object.keys(tools.$codemode)` — the platform namespace only lists `search`. */
+const CODEMODE_KEYS_SHIM = '["search"]';
+
+/**
+ * `Object.keys(tools.<ns>)` — Pi's `tools` is flat, so filter the live catalog
+ * by the namespace's identifier prefix (both the plain and MCP `mcp__` spellings).
+ */
+function namespaceKeysShim(segments: readonly string[]): string {
+  const prefix = toCodemodeIdentifier(segments.join("__"));
+  return `ALL_TOOLS.map((__cm_tool) => __cm_tool.name).filter((__cm_name) => __cm_name.startsWith(${JSON.stringify(`${prefix}_`)}) || __cm_name.startsWith(${JSON.stringify(`mcp__${prefix}_`)}))`;
+}
+
+/** Whether `node` is the argument of an `Object.keys(...)` call — that call owns the replacement range. */
+function isObjectKeysTarget(node: AstNode, parents: readonly AstNode[]): boolean {
+  const parent = parents[parents.length - 1];
+  if (parent?.type !== "CallExpression") return false;
+  if ((parent.arguments as AstNode[] | undefined)?.[0] !== node) return false;
+  const chain = collectChain(parent.callee as AstNode);
+  return chain?.root === "Object" && chain.segments.join(".") === "keys";
+}
 
 function isInnerMember(node: AstNode, parents: readonly AstNode[]): boolean {
   const parent = parents[parents.length - 1];
@@ -71,6 +94,9 @@ function isInnerMember(node: AstNode, parents: readonly AstNode[]): boolean {
 export function compileOpencodeDialect(code: string, options: OpencodeCompileOptions = {}): OpencodeCompileResult {
   const ast = parseScript(code);
   if (!ast) return { code, changed: false, rewrites: 0, warnings: [] };
+  // A locally bound `tools` shadows the sandbox global, so every path under it
+  // is the script's own object — never rewrite it or warn about it.
+  if (collectBoundNames(ast).has("tools")) return { code, changed: false, rewrites: 0, warnings: [] };
 
   const catalog = buildCatalog(options.tools ?? []);
   const replacements: Replacement[] = [];
@@ -80,6 +106,19 @@ export function compileOpencodeDialect(code: string, options: OpencodeCompileOpt
   walk(ast, [], (node, parents) => {
     if (node.type === "MemberExpression") {
       if (isInnerMember(node, parents)) return;
+      // `Object.keys(tools.<ns>)` / `for...in tools.<ns>`: the call-level (or
+      // warning-level) handling owns this range.
+      if (isObjectKeysTarget(node, parents)) return;
+      const parent = parents[parents.length - 1];
+      if (parent?.type === "ForInStatement" && parent.right === node) {
+        const chain = collectChain(node);
+        if (chain?.root === "tools" && chain.segments.length > 0) {
+          warnings.push(
+            `\`for...in tools.${chain.segments.join(".")}\` iterates nothing in Pi (\`tools\` is flat); use \`ALL_TOOLS.map((t) => t.name)\` instead`,
+          );
+          return;
+        }
+      }
       const chain = collectChain(node);
       if (chain?.root !== "tools" || chain.segments.length === 0) return;
 
@@ -112,11 +151,17 @@ export function compileOpencodeDialect(code: string, options: OpencodeCompileOpt
       const first = (node.arguments as AstNode[])[0];
       const target = first ? collectChain(first) : undefined;
       if (target?.root !== "tools") return;
-      if (target.segments.length > 0) {
-        warnings.push(`\`Object.keys(tools.${target.segments.join(".")})\` has no Pi equivalent; left unchanged`);
+      if (target.segments.length === 0) {
+        replacements.push({ start: node.start, end: node.end, text: OBJECT_KEYS_SHIM });
+        rewrites++;
         return;
       }
-      replacements.push({ start: node.start, end: node.end, text: OBJECT_KEYS_SHIM });
+      if (target.segments[0] === "$codemode" && target.segments.length === 1) {
+        replacements.push({ start: node.start, end: node.end, text: CODEMODE_KEYS_SHIM });
+        rewrites++;
+        return;
+      }
+      replacements.push({ start: node.start, end: node.end, text: namespaceKeysShim(target.segments) });
       rewrites++;
     }
   });

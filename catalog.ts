@@ -35,6 +35,10 @@ export interface Catalog {
   readonly identifiers: ReadonlyMap<string, string>;
   /** `normalizeToolKey(name)` -> name, with ambiguous keys removed. */
   readonly normalized: ReadonlyMap<string, string>;
+  /** Exact raw tool name -> name. Wins over `identifiers` so two catalog names
+   * that collide on one identifier (`web-search` / `web_search`) resolve
+   * deterministically instead of order-dependently. */
+  readonly exact: ReadonlyMap<string, string>;
 }
 
 /** The `foo.bar` / `foo["bar"]` segment of a member expression, if visible. */
@@ -123,9 +127,11 @@ export function normalizeToolKey(name: string): string {
 export function buildCatalog(names: readonly string[]): Catalog {
   const identifiers = new Map<string, string>();
   const normalized = new Map<string, string>();
+  const exact = new Map<string, string>();
   const ambiguous = new Set<string>();
   for (const name of names) {
     identifiers.set(toCodemodeIdentifier(name), name);
+    exact.set(name, name);
     const key = normalizeToolKey(name);
     if (key === "") continue;
     const existing = normalized.get(key);
@@ -133,22 +139,32 @@ export function buildCatalog(names: readonly string[]): Catalog {
     else normalized.set(key, name);
   }
   for (const key of ambiguous) normalized.delete(key);
-  return { identifiers, normalized };
+  return { identifiers, normalized, exact };
 }
 
 /**
- * Resolve a namespace path to a Pi codemode identifier. Exact separator
- * conventions first, then a fuzzy `normalizeToolKey` match, then a
- * deterministic flatten so the path at least parses.
+ * Resolve a namespace path to a Pi codemode identifier. Exact raw-name and
+ * separator-convention candidates first (including MCP's canonical `mcp__`
+ * server.local spelling), then a fuzzy `normalizeToolKey` match with and
+ * without the `mcp_` prefix, then a deterministic flatten so the path at least
+ * parses.
  */
 export function resolveToolPath(segments: readonly string[], catalog: Catalog): Resolution {
-  const candidates = [
+  const joins = [
     segments.join("."),
     segments.join("__"),
     segments.join("_"),
     segments.join("/"),
     segments.join("-"),
   ];
+  const candidates = [...joins, ...joins.map((join) => `mcp__${join}`)];
+
+  // Exact raw-name match first: an identifier collision (`web-search` vs
+  // `web_search`) must resolve to the name that was actually written.
+  for (const candidate of candidates) {
+    const exact = catalog.exact.get(candidate);
+    if (exact !== undefined) return { identifier: toCodemodeIdentifier(exact), matched: exact };
+  }
   for (const candidate of candidates) {
     const identifier = toCodemodeIdentifier(candidate);
     const matched = catalog.identifiers.get(identifier);
@@ -156,8 +172,10 @@ export function resolveToolPath(segments: readonly string[], catalog: Catalog): 
   }
 
   const key = normalizeToolKey(segments.join("."));
-  const fuzzy = key === "" ? undefined : catalog.normalized.get(key);
-  if (fuzzy !== undefined) return { identifier: toCodemodeIdentifier(fuzzy), matched: fuzzy };
+  if (key !== "") {
+    const fuzzy = catalog.normalized.get(key) ?? catalog.normalized.get(`mcp_${key}`);
+    if (fuzzy !== undefined) return { identifier: toCodemodeIdentifier(fuzzy), matched: fuzzy };
+  }
 
   return { identifier: toCodemodeIdentifier(segments.join("__")) };
 }

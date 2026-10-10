@@ -65,7 +65,7 @@ export function applyCompileReceipt(
  * Mirrors pi-tool-guard's transient status.
  */
 export function showGuardStatus(ctx: ExtensionContext, text: string): void {
-  if (ctx.mode !== "tui") return;
+  if (ctx.mode !== "tui" || !ctx.ui) return;
   ctx.ui.setStatus(STATUS_KEY, text);
 
   const key: object = ctx.ui;

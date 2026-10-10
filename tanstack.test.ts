@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { compileCodemodeSource } from "./compile.ts";
 import { detectCodemodeDialect } from "./dialect.ts";
+import { parseScript } from "./parse.ts";
 import { compileTanstackDialect } from "./tanstack.ts";
 
 describe("detectCodemodeDialect: tanstack", () => {
@@ -68,5 +70,35 @@ describe("compileTanstackDialect", () => {
     const twice = compileTanstackDialect(once.code, { tools: ["getWeather"] });
     expect(twice.changed).toBe(false);
     expect(twice.code).toBe(once.code);
+  });
+
+  it("expands a shorthand property instead of corrupting it", () => {
+    const result = compileTanstackDialect("const o = { external_foo };", { tools: ["foo"] });
+    expect(result.changed).toBe(true);
+    expect(result.code).toBe("const o = { external_foo: tools.foo };");
+    expect(parseScript(result.code)).toBeDefined();
+  });
+
+  it("keeps the full pipeline output parseable for shorthand properties", () => {
+    const result = compileCodemodeSource("const o = { external_foo };", { tools: ["foo"] });
+    expect(result.dialect).toBe("tanstack");
+    expect(result.code).toContain("external_foo: tools.foo");
+    expect(parseScript(result.code)).toBeDefined();
+  });
+
+  it("does not let a parameter in one function suppress a top-level rewrite", () => {
+    const code = "function f(external_foo) { return external_foo(1); }\nconst r = await external_foo(2);";
+    const result = compileTanstackDialect(code, { tools: ["foo"] });
+    expect(result.code).toContain("return external_foo(1)");
+    expect(result.code).toContain("await tools.foo(2)");
+    expect(parseScript(result.code)).toBeDefined();
+  });
+
+  it("does not rewrite references to a same-named binding in a sibling scope", () => {
+    const code = "function f() { const external_foo = () => 1; return external_foo(); }\nexternal_foo({});";
+    const result = compileTanstackDialect(code, { tools: ["foo"] });
+    expect(result.code).toContain("return external_foo()");
+    expect(result.code).toContain("tools.foo({})");
+    expect(parseScript(result.code)).toBeDefined();
   });
 });

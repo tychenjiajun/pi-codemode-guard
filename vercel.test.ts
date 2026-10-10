@@ -97,6 +97,12 @@ describe("compileVercelDialect", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
+  it("warns once per unresolved identifier, not per occurrence", () => {
+    const result = compileVercelDialect('tools["nope"]({});\ntools["nope"]({});', { tools: ["bash"] });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("nope");
+  });
+
   it("maps a raw name without a catalog and does not warn", () => {
     const result = compileVercelDialect('await tools["lookup-user"]({});');
     expect(result.changed).toBe(true);

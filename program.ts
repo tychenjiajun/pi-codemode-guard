@@ -16,6 +16,7 @@
 // model meant: a sequential `await tools.<id>({ ... })` for every step, with
 // the collected results returned as the script output.
 
+import { normalizeToolKey } from "./catalog.ts";
 import { toCodemodeIdentifier } from "./identifiers.ts";
 
 /** Thrown when a value passed to the program compiler is not a tool call. */
@@ -41,15 +42,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseArgsValue(value: unknown): unknown {
+/**
+ * The argument key to guess when a string `args` value is not JSON. A shell
+ * tool wants `command`, a reader wants `path`, and a writer most likely got
+ * a path too (a lone multi-line string is content, not a path).
+ */
+function fallbackArgsKey(tool: string, value: string): string {
+  const name = normalizeToolKey(tool);
+  if (
+    name.includes("read") ||
+    /(?:^|_)(?:cat|open|load|view|preview|glob|head|tail|stat|ls|dir|list)(?:_|$)/.test(name)
+  ) {
+    return "path";
+  }
+  if (/(?:write|edit|create|save|append|delete|remove)/.test(name)) {
+    return value.includes("\n") ? "content" : "path";
+  }
+  return "command";
+}
+
+function parseArgsValue(value: unknown, tool: string): unknown {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
   if (trimmed === "") return {};
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    return { command: value };
+    return { [fallbackArgsKey(tool, value)]: value };
   }
+}
+
+/**
+ * `JSON.stringify` escapes quotes and backslashes but leaves U+2028/U+2029
+ * raw; they are legal in ES2019+ string literals but escaped here so the
+ * emitted source survives any consumer that treats them as line terminators.
+ */
+function serializeArgs(args: unknown): string {
+  const json = JSON.stringify(args);
+  if (json === undefined) return "undefined";
+  return json.replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
 function collectRest(step: Record<string, unknown>, skip: readonly string[]): Record<string, unknown> {
@@ -75,7 +106,7 @@ export function toToolCall(step: unknown): CompiledToolCall | undefined {
     const tool = step[toolKey] as string;
     const argsKey = ARG_KEYS.find((key) => key in step);
     const rawArgs = argsKey !== undefined ? step[argsKey] : collectRest(step, [toolKey, ...ARG_KEYS]);
-    return { tool, args: parseArgsValue(rawArgs) };
+    return { tool, args: parseArgsValue(rawArgs, tool) };
   }
 
   const keys = Object.keys(step);
@@ -114,7 +145,7 @@ export function programToJs(steps: readonly unknown[]): string {
       );
     }
     const name = `_result${index++}`;
-    lines.push(`const ${name} = await tools.${toCodemodeIdentifier(call.tool)}(${JSON.stringify(call.args)});`);
+    lines.push(`const ${name} = await tools.${toCodemodeIdentifier(call.tool)}(${serializeArgs(call.args)});`);
     results.push(name);
   }
 

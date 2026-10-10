@@ -151,6 +151,13 @@ describe("compilePtcDialect", () => {
     expect(result.warnings[0]).toContain("nope");
   });
 
+  it("warns about Object.keys(tools.<ns>) instead of staying silent", () => {
+    const result = compilePtcDialect("const names = Object.keys(tools.orders);", { tools: ["orders.lookup"] });
+    expect(result.changed).toBe(false);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("Object.keys(tools.orders)");
+  });
+
   it("returns unparseable source unchanged", () => {
     const result = compilePtcDialect("const = ;", { tools: ["bash"] });
     expect(result.code).toBe("const = ;");

@@ -59,4 +59,47 @@ describe("splitOptionsLine", () => {
     expect(result.changed).toBe(false);
     expect(result.body).toBe(input);
   });
+
+  it("passes prose that only looks like a bare options directive through untouched", () => {
+    const input = "// options: use timeout: 30000\nreturn 1;";
+    const result = splitOptionsLine(input);
+    expect(result.changed).toBe(false);
+    expect(result.optionsLine).toBeUndefined();
+    expect(result.body).toBe(input);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("passes `// options: see README` through untouched with no warning", () => {
+    const input = "// options: see README\nreturn 1;";
+    const result = splitOptionsLine(input);
+    expect(result.changed).toBe(false);
+    expect(result.body).toBe(input);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("falls through to the next alias when a value is invalid", () => {
+    const result = splitOptionsLine('// @options: {"max_output_tokens": "abc", "maxTokens": 500}\nreturn 1;');
+    expect(result.optionsLine).toBe('// @options: {"max_output_tokens": 500}');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("accepts max_output_tokens: 0 (pi allows a non-negative safe integer)", () => {
+    const result = splitOptionsLine('// @options: {"max_output_tokens": 0}\nreturn 1;');
+    expect(result.optionsLine).toBe('// @options: {"max_output_tokens": 0}');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("is idempotent: re-splitting its own output is stable", () => {
+    const once = splitOptionsLine("// options: {maxOutputTokens: 1500, timeout: 45000}\nreturn 1;");
+    expect(once.optionsLine).toBeDefined();
+    const rebuilt = `${once.optionsLine}\n${once.body}`;
+    const twice = splitOptionsLine(rebuilt);
+    expect(twice.optionsLine).toBe(once.optionsLine);
+    expect(twice.body).toBe(once.body);
+    // And prose stays prose.
+    const prose = "// options: use timeout: 30000\nreturn 1;";
+    const proseAgain = splitOptionsLine(splitOptionsLine(prose).body);
+    expect(proseAgain.changed).toBe(false);
+    expect(proseAgain.body).toBe(prose);
+  });
 });

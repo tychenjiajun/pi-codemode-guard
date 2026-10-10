@@ -76,4 +76,46 @@ describe("injectAwait", () => {
   it("returns undefined when the script does not parse", () => {
     expect(injectAwait("const = ;")).toBeUndefined();
   });
+
+  it("leaves a class field initializer alone (await is illegal there)", () => {
+    const code = 'class A { p = tools.read({ path: "a" }); }';
+    expect(inject(code)).toBe(code);
+  });
+
+  it("leaves a class static block alone (await is illegal there)", () => {
+    const code = 'class A { static { tools.read({ path: "a" }); } }';
+    expect(inject(code)).toBe(code);
+  });
+
+  it("leaves a class heritage expression alone (await is illegal there)", () => {
+    const code = "class A extends tools.getBase({}) {}";
+    expect(inject(code)).toBe(code);
+  });
+
+  it("parenthesizes await used as the base of **", () => {
+    expect(inject("const n = tools.score({}) ** 2;")).toBe("const n = (await tools.score({})) ** 2;");
+  });
+
+  it("still awaits calls inside an async class method", () => {
+    expect(inject('class A { async m() { const r = tools.read({ path: "a" }); } }')).toBe(
+      'class A { async m() { const r = await tools.read({ path: "a" }); } }',
+    );
+  });
+
+  it("does not await a locally bound tools object", () => {
+    const code = "const tools = { read: () => 1 }; const x = tools.read();";
+    expect(inject(code)).toBe(code);
+  });
+
+  it("does not await a locally declared searchTools", () => {
+    const code = 'function searchTools(q) { return q; }\nconst hits = searchTools("x");';
+    expect(inject(code)).toBe(code);
+  });
+
+  it("is idempotent", () => {
+    const once = inject('const a = tools.read({ path: "a" });\ntools.bash({ command: "ls" }).trim();');
+    const twice = inject(once);
+    expect(twice).toBe(once);
+    expect(injectAwait(once)?.inserted).toBe(0);
+  });
 });

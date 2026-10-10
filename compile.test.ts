@@ -280,4 +280,121 @@ describe("compileCodemodeSource", () => {
     expect(twice.changed).toBe(false);
     expect(twice.code).toBe(once.code);
   });
+
+  it("strips nested fences in one compile and is idempotent", () => {
+    const once = compileCodemodeSource(
+      '```js\n```javascript\nconst x = await tools.read({ path: "a" });\n```\n```',
+    );
+    expect(once.code).toBe('const x = await tools.read({ path: "a" });');
+    expect(once.code).not.toContain("```");
+    const twice = compileCodemodeSource(once.code);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("propagates fence warnings from the strip pass", () => {
+    const unterminated = compileCodemodeSource("```js\nconst x = 1;");
+    expect(unterminated.changed).toBe(true);
+    expect(unterminated.code).toBe("const x = 1;");
+    expect(unterminated.warnings).toContain("removed an unterminated code fence");
+  });
+
+  it("warns when it removes an empty code fence", () => {
+    const result = compileCodemodeSource("```js\n```");
+    expect(result.changed).toBe(true);
+    expect(result.code).toBe("");
+    expect(result.passes).toContain("strip-code-fence");
+    expect(result.warnings.some((warning) => warning.includes("empty code fence"))).toBe(true);
+  });
+
+  it("lists the options pass even when the script is byte-identical", () => {
+    const result = compileCodemodeSource('// @options: {"timeout_ms": 30000}\n');
+    expect(result.changed).toBe(false);
+    expect(result.passes).toEqual(["normalize-options-line"]);
+    expect(result.parsed).toBe(true);
+  });
+
+  it("reports the pi dialect for an options-only script", () => {
+    const result = compileCodemodeSource('// @options: {"timeout_ms": 30000}\n');
+    expect(result.dialect).toBe("pi");
+  });
+
+  it("surfaces OpenCode warnings even when the pass makes no change", () => {
+    const result = compileCodemodeSource('await tools.$codemode.describe({ target: "x" });');
+    expect(result.dialect).toBe("opencode");
+    expect(result.changed).toBe(false);
+    expect(result.code).toBe('await tools.$codemode.describe({ target: "x" });');
+    expect(result.warnings.some((warning) => warning.includes("$codemode.describe"))).toBe(true);
+  });
+
+  it("strips generic TypeScript when no dialect claims the script", () => {
+    const once = compileCodemodeSource("const x: number = 1;\nreturn x;");
+    expect(once.changed).toBe(true);
+    expect(once.code).toBe("const x = 1;\nreturn x;");
+    expect(once.passes).toContain("strip-typescript");
+    expect(once.parsed).toBe(true);
+    const twice = compileCodemodeSource(once.code);
+    expect(twice.changed).toBe(false);
+    expect(twice.passes).not.toContain("strip-typescript");
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("does not run the generic strip when a dialect TypeScript pass already ran", () => {
+    const result = compileCodemodeSource('const n: number = 1;\nreturn tools["lookup-user"]({ id: n });', {
+      tools: ["lookup-user"],
+    });
+    expect(result.passes).toContain("vercel-typescript");
+    expect(result.passes).not.toContain("strip-typescript");
+    expect(result.parsed).toBe(true);
+  });
+
+  it("resolves bracket access against the tool catalog", () => {
+    const options = { tools: ["mcp__dev_radius_search"] };
+    const once = compileCodemodeSource('tools["mcp.dev.radius.search"]({ q: 1 });', options);
+    expect(once.code).toBe("await tools.mcp__dev_radius_search({ q: 1 });");
+    expect(once.passes).toContain("rewrite-tool-identifiers");
+    const twice = compileCodemodeSource(once.code, options);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("falls back to the naive identifier without a catalog", () => {
+    const result = compileCodemodeSource('tools["mcp.dev.radius.search"]({ q: 1 });');
+    expect(result.code).toBe("await tools.mcp_dev_radius_search({ q: 1 });");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("stays warning-free when a bracket name is not in the catalog", () => {
+    const result = compileCodemodeSource('tools["a-b"]({});', { tools: ["read"] });
+    expect(result.code).toBe("await tools.a_b({});");
+    expect(result.warnings).toEqual([]);
+  });
+});
+
+describe("JSON tool-call programs", () => {
+  it("awaits raw-JavaScript string steps and is idempotent (pi #10555)", () => {
+    const input = '["text(tools.read({path: \\"a\\"}))"]';
+    const once = compileCodemodeSource(input);
+    expect(once.parsed).toBe(true);
+    expect(once.dialect).toBe("unknown");
+    expect(once.passes).toContain("compile-json-program");
+    expect(once.code).toBe('text(await tools.read({path: "a"}))');
+    const twice = compileCodemodeSource(once.code);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+    const thrice = compileCodemodeSource(twice.code);
+    expect(thrice.code).toBe(once.code);
+  });
+
+  it("rewrites bracket access in string steps and is idempotent", () => {
+    const input = '["tools[\\"a-b\\"]({})"]';
+    const once = compileCodemodeSource(input);
+    expect(once.parsed).toBe(true);
+    expect(once.dialect).toBe("unknown");
+    expect(once.passes).toContain("compile-json-program");
+    expect(once.code).toBe("await tools.a_b({})");
+    const twice = compileCodemodeSource(once.code);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
 });

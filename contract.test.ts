@@ -63,4 +63,58 @@ describe("readPiCodemodeGuardDetails", () => {
       readPiCodemodeGuardDetails({ [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, originalCode: 5 } }),
     ).toBeUndefined();
   });
+
+  it("ignores unknown extra fields inside the record", () => {
+    const details = readPiCodemodeGuardDetails({
+      [PI_CODEMODE_GUARD_DETAILS_KEY]: {
+        ...VALID,
+        futureField: { nested: true },
+        futureFlag: 7,
+      },
+    });
+    expect(details).toEqual(VALID);
+    expect(details).not.toHaveProperty("futureField");
+    expect(details).not.toHaveProperty("futureFlag");
+  });
+
+  it("returns undefined when the `passes` or `warnings` keys are missing entirely", () => {
+    // no `warnings` key at all (passes present)
+    expect(
+      readPiCodemodeGuardDetails({
+        [PI_CODEMODE_GUARD_DETAILS_KEY]: {
+          version: 1,
+          originalCode: "const x = 1;",
+          compiledCode: "const x = 1;",
+          passes: [],
+          parsed: true,
+          dialect: "pi",
+        },
+      }),
+    ).toBeUndefined();
+    // no `passes` key at all (warnings present)
+    expect(
+      readPiCodemodeGuardDetails({
+        [PI_CODEMODE_GUARD_DETAILS_KEY]: {
+          version: 1,
+          originalCode: "const x = 1;",
+          compiledCode: "const x = 1;",
+          parsed: true,
+          dialect: "pi",
+          warnings: ["dropped @options"],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("treats a non-boolean `parsed` as false without rejecting the record", () => {
+    expect(readPiCodemodeGuardDetails({ [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, parsed: "yes" } })?.parsed).toBe(false);
+    expect(readPiCodemodeGuardDetails({ [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, parsed: 1 } })?.parsed).toBe(false);
+  });
+
+  it("falls back to inline content for an unknown future contract version", () => {
+    // Consumers must treat an unrecognized version as "no guard record" and
+    // use the inline result content instead.
+    expect(readPiCodemodeGuardDetails({ [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, version: 99 } })).toBeUndefined();
+    expect(readPiCodemodeGuardDetails({ [PI_CODEMODE_GUARD_DETAILS_KEY]: { ...VALID, version: 0 } })).toBeUndefined();
+  });
 });

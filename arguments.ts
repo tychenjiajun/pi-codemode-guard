@@ -101,6 +101,18 @@ function programFromArray(value: readonly unknown[]): string {
 }
 
 /**
+ * A lone alias/program key (`{ input: {...} }`, `{ tool_calls: [...] }`) is
+ * the field-alias shape, not the single-key tool shorthand (`{ read: {...} }`)
+ * — alias interpretation must win for those keys.
+ */
+function prefersAliasInterpretation(args: Record<string, unknown>): boolean {
+  const keys = Object.keys(args);
+  if (keys.length !== 1) return false;
+  const key = keys[0]!;
+  return (CODE_FIELD_ALIASES as readonly string[]).includes(key) || (PROGRAM_FIELD_ALIASES as readonly string[]).includes(key);
+}
+
+/**
  * Interpret arbitrary tool-call arguments as codemode source. Throws
  * {@link CodemodeArgumentError} when nothing recognizable is present.
  */
@@ -131,8 +143,15 @@ export function coerceCodemodeArguments(args: unknown): CoercedArguments {
     if (Array.isArray(value)) {
       return { code: programFromArray(value), kind: "tool-program", field: "code" };
     }
-    // `code` is present but unusable; fall through to the aliases so a model
-    // that sent `{ code: 42, script: "..." }` still gets its script run.
+    // `code` is present but unusable; fall through so a model that sent
+    // `{ code: 42, script: "..." }` still gets its script run.
+  }
+
+  // A tool-call envelope beats alias fields: `{ tool: "bash", input: "ls" }`
+  // is a call to run, not a script named "ls". Checked before the alias loop
+  // because aliases like `input`/`content` are also tool-argument keys.
+  if (toToolCall(args) !== undefined && !prefersAliasInterpretation(args)) {
+    return { code: programFromArray([args]), kind: "tool-call" };
   }
 
   for (const field of CODE_FIELD_ALIASES) {

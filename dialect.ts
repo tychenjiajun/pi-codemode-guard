@@ -7,7 +7,7 @@
 // can be compiled:
 //
 //   pi          — `tools.<identifier>`, `searchTools`, `ALL_TOOLS`, `@options`
-//   opencode    — `tools.<ns>.<tool>`, `tools.$codemode.search`, `Object.keys(tools)`
+//   opencode    — `tools.<ns>.<tool>`, `tools.$codemode.*`, `Object.keys(tools)`
 //   cloudflare  — `codemode.<tool>`, `codemode.search/describe/run/step`, and an
 //                 `async () => { ... }` wrapper as the whole program
 //   tanstack    — bare `external_<tool>` bindings (TanStack AI code mode)
@@ -23,7 +23,7 @@
 // signal is also checked lexically (a bare `external_<tool>` reference, never a
 // `tools.external_<tool>` member access).
 
-import { collectChain, walk } from "./catalog.ts";
+import { collectBoundNames, collectChain, walk } from "./catalog.ts";
 import { parseScript, type AstNode } from "./parse.ts";
 
 export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "unknown";
@@ -31,8 +31,12 @@ export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "v
 const TANSTACK_PREFIX = "external_";
 /** A bare `external_<tool>` reference (not `tools.external_<tool>`), for unparseable TypeScript. */
 const TANSTACK_LEXICAL = /(^|[^.\w$])external_[A-Za-z0-9_$]+/;
-/** A bare `tools.<name>` / `tools["<name>"]` / `tools?.<name>` reference, for unparseable TypeScript (Vercel). */
-const VERCEL_LEXICAL = /\btools\s*(?:\?\.|\.)?\s*(?:[A-Za-z_$]|\[)/;
+/**
+ * A bare `tools.<name>` / `tools["<name>"]` / `tools?.<name>` reference, for
+ * unparseable TypeScript (Vercel). The accessor is required, so the bare word
+ * `tools` in `toolset` or `"tools rock"` does not match.
+ */
+const VERCEL_LEXICAL = /\btools\s*(?:\?\.\s*(?:[A-Za-z_$]|\[)|\.\s*[A-Za-z_$]|\[)/;
 /** An OpenCode-style nested `tools.<ns>.<tool>` path, for unparseable TypeScript. */
 const OPENCODE_NESTED_LEXICAL = /\btools\.[A-Za-z_$][\w$]*\.[A-Za-z_$]/;
 /** A Cloudflare `codemode.<tool>` / `codemode.search` platform call, for unparseable TypeScript. */
@@ -41,11 +45,83 @@ const CLOUDFLARE_LEXICAL = /\bcodemode\s*\./;
 const PTC_TOOL_CALL_ERROR_LEXICAL = /\bToolCallError\b/;
 const PTC_IMPORT_LEXICAL = /\bimport\s*\(/;
 const PTC_OBJECT_KEYS_LEXICAL = /\bObject\.keys\s*\(\s*tools\s*\)/;
+/**
+ * Cheap lexical check for a locally bound `tools`, used only when the script
+ * does not parse (no AST to run `collectBoundNames` on). Best-effort: it looks
+ * for declaration forms only (`const/let/var/function tools`, function
+ * parameters, arrow parameters) so passing the global `tools` to a function
+ * does not count.
+ */
+const LEXICAL_TOOLS_BINDING =
+  /\b(?:const|let|var|function)\s+tools\b|\bfunction\s*[\w$]*\s*\(\s*tools\b|\(\s*tools\b[^)]*\)\s*=>/;
+
+/**
+ * Blank out `//` and `/* … *​/` comments (newlines preserved, string literals
+ * left alone) so a comment-only mention of a dialect keyword is not a signal.
+ */
+function stripComments(text: string): string {
+  let out = "";
+  let i = 0;
+  let quote = "";
+  while (i < text.length) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quote !== "") {
+      out += ch;
+      if (ch === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = "";
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") {
+        out += " ";
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out += "  ";
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        out += text[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      if (i < text.length) {
+        out += "  ";
+        i += 2;
+      }
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
 
 export interface DialectDetection {
   readonly dialect: CodemodeDialect;
   /** Why the dialect was chosen, e.g. `$codemode.search`, `codemode.<tool>`, `searchTools`. */
   readonly signals: readonly string[];
+}
+
+export interface DialectDetectionContext {
+  /**
+   * True when the source had a `// @options:` line that the caller stripped
+   * before detection (compile.ts normalizes the options line first, so the
+   * comment is no longer visible to the lexical signal check).
+   */
+  readonly hadOptionsLine?: boolean;
 }
 
 const CODEMODE_PLATFORM_METHODS = new Set(["search", "describe", "run", "step"]);
@@ -63,23 +139,69 @@ function isAsyncArrowWrapper(ast: AstNode): boolean {
   );
 }
 
+/** Whether `node` sits inside `container`'s source range. */
+function within(node: AstNode, container: AstNode | undefined | null): boolean {
+  if (!container) return false;
+  return node.start >= container.start && node.end <= container.end;
+}
+
+/**
+ * Whether the identifier is written in a declaration position — a variable or
+ * function/class name, a function or catch parameter, or a property key — so
+ * it is not a TanStack binding reference.
+ */
+function isDeclarationPosition(node: AstNode, parents: readonly AstNode[]): boolean {
+  const parent = parents[parents.length - 1];
+  if (!parent) return false;
+  if (parent.type === "Property" || parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") {
+    if (parent.key === node) return true;
+  }
+  for (let i = parents.length - 1; i >= 0; i--) {
+    const ancestor = parents[i]!;
+    if (ancestor.type === "VariableDeclarator" && within(node, ancestor.id as AstNode | undefined)) return true;
+    if (ancestor.type === "FunctionDeclaration" && within(node, ancestor.id as AstNode | undefined)) return true;
+    if (ancestor.type === "ClassDeclaration" && within(node, ancestor.id as AstNode | undefined)) return true;
+    if (ancestor.type === "CatchClause" && within(node, ancestor.param as AstNode | undefined)) return true;
+    if (
+      ancestor.type === "FunctionDeclaration" ||
+      ancestor.type === "FunctionExpression" ||
+      ancestor.type === "ArrowFunctionExpression"
+    ) {
+      if ((ancestor.params as AstNode[]).some((param) => within(node, param))) return true;
+    }
+  }
+  return false;
+}
+
 /** Lexical + AST signals that identify the dialect of a script. */
-export function detectCodemodeDialect(code: string): DialectDetection {
+export function detectCodemodeDialect(code: string, context: DialectDetectionContext = {}): DialectDetection {
   const signals = new Set<string>();
 
-  if (code.includes("$codemode")) signals.add("$codemode");
-  if (/@options/i.test(code)) signals.add("pi:@options");
+  if (/@options/i.test(code) || context.hadOptionsLine === true) signals.add("pi:@options");
 
   const ast = parseScript(code);
+  // A locally bound `tools` shadows the sandbox global: its namespace paths,
+  // `$codemode` members, and `Object.keys(tools)` calls address the script's
+  // own object, so none of them is an OpenCode signal. Pure and catalog-free:
+  // this only reads the script's own bindings.
+  const toolsBound = ast
+    ? collectBoundNames(ast).has("tools")
+    : LEXICAL_TOOLS_BINDING.test(stripComments(code));
+
+  if (!toolsBound && code.includes("$codemode")) signals.add("$codemode");
+
   if (ast) {
     walk(ast, [], (node, parents) => {
       if (node.type === "MemberExpression") {
         const parent = parents[parents.length - 1];
         if (parent?.type === "MemberExpression" && parent.object === node) return;
         const chain = collectChain(node);
-        if (chain?.root === "tools") {
-          if (chain.segments[0] === "$codemode") signals.add("$codemode.search");
-          else if (chain.segments.length >= 2) signals.add("tools.<namespace>.<tool>");
+        if (chain?.root === "tools" && !toolsBound) {
+          if (chain.segments[0] === "$codemode") {
+            signals.add(chain.segments[1] === "search" ? "$codemode.search" : "$codemode.<member>");
+          } else if (chain.segments.length >= 2) {
+            signals.add("tools.<namespace>.<tool>");
+          }
         }
         if (chain?.root === "codemode") {
           if (chain.segments.length >= 1) {
@@ -107,10 +229,7 @@ export function detectCodemodeDialect(code: string): DialectDetection {
         if (name.startsWith(TANSTACK_PREFIX) && name.length > TANSTACK_PREFIX.length) {
           const parent = parents[parents.length - 1];
           const isMemberProperty = parent?.type === "MemberExpression" && parent.property === node;
-          const isDeclaration =
-            (parent?.type === "VariableDeclarator" && parent.id === node) ||
-            (parent?.type === "FunctionDeclaration" && parent.id === node);
-          if (!isMemberProperty && !isDeclaration) signals.add("external_<tool>");
+          if (!isMemberProperty && !isDeclarationPosition(node, parents)) signals.add("external_<tool>");
         }
         return;
       }
@@ -120,46 +239,53 @@ export function detectCodemodeDialect(code: string): DialectDetection {
         if (chain?.root === "Object" && chain.segments.join(".") === "keys") {
           const first = (node.arguments as AstNode[])[0];
           const target = first ? collectChain(first) : undefined;
-          if (target?.root === "tools") {
+          if (target?.root === "tools" && !toolsBound) {
             signals.add(target.segments.length === 0 ? "Object.keys(tools)" : "Object.keys(tools.<ns>)");
           }
         }
-        if (chain?.root === "tools" && chain.segments[0] === "$codemode") signals.add("$codemode.search");
+        if (chain?.root === "tools" && chain.segments[0] === "$codemode" && !toolsBound) {
+          signals.add(chain.segments[1] === "search" ? "$codemode.search" : "$codemode.<member>");
+        }
       }
     });
 
     if (isAsyncArrowWrapper(ast)) signals.add("async-arrow-wrapper");
-  } else if (TANSTACK_LEXICAL.test(code)) {
-    // No AST (TypeScript does not parse as JavaScript): fall back to the
-    // distinctive bare `external_<tool>` binding name.
-    signals.add("external_<tool>");
-  } else if (OPENCODE_NESTED_LEXICAL.test(code)) {
-    // TypeScript that still uses OpenCode's nested `tools.<ns>.<tool>` paths.
-    signals.add("tools.<namespace>.<tool>");
-  } else if (CLOUDFLARE_LEXICAL.test(code)) {
-    // TypeScript Cloudflare agents source still addresses the platform namespace.
-    signals.add("codemode.<tool>");
   } else {
-    // DeepSeek Harness PTC's signals, checked before the generic Vercel
-    // fallback: its `ToolCallError` global, `await import(...)`, and
-    // `Object.keys(tools)` discovery all survive as raw text in TypeScript.
-    let ptc = false;
-    if (PTC_TOOL_CALL_ERROR_LEXICAL.test(code)) {
-      signals.add("ptc:ToolCallError");
-      ptc = true;
-    }
-    if (PTC_IMPORT_LEXICAL.test(code)) {
-      signals.add("ptc:import()");
-      ptc = true;
-    }
-    if (PTC_OBJECT_KEYS_LEXICAL.test(code)) {
-      signals.add("ptc:Object.keys(tools)");
-      ptc = true;
-    }
-    if (!ptc && VERCEL_LEXICAL.test(code)) {
-      // TypeScript plus a `tools` reference and no other dialect's signal is the
-      // Vercel AI SDK code mode shape (`js` field, `tools.<name>` calls).
-      signals.add("vercel:tools.<name>");
+    // No AST (TypeScript does not parse as JavaScript): fall back to lexical
+    // signals. Comments are blanked out first so a comment-only mention of a
+    // dialect keyword does not misroute the script.
+    const lexical = stripComments(code);
+    if (TANSTACK_LEXICAL.test(lexical)) {
+      // The distinctive bare `external_<tool>` binding name.
+      signals.add("external_<tool>");
+    } else if (!toolsBound && OPENCODE_NESTED_LEXICAL.test(lexical)) {
+      // TypeScript that still uses OpenCode's nested `tools.<ns>.<tool>` paths.
+      signals.add("tools.<namespace>.<tool>");
+    } else if (CLOUDFLARE_LEXICAL.test(lexical)) {
+      // TypeScript Cloudflare agents source still addresses the platform namespace.
+      signals.add("codemode.<tool>");
+    } else {
+      // DeepSeek Harness PTC's signals, checked before the generic Vercel
+      // fallback: its `ToolCallError` global, `await import(...)`, and
+      // `Object.keys(tools)` discovery all survive as raw text in TypeScript.
+      let ptc = false;
+      if (PTC_TOOL_CALL_ERROR_LEXICAL.test(lexical)) {
+        signals.add("ptc:ToolCallError");
+        ptc = true;
+      }
+      if (PTC_IMPORT_LEXICAL.test(lexical)) {
+        signals.add("ptc:import()");
+        ptc = true;
+      }
+      if (PTC_OBJECT_KEYS_LEXICAL.test(lexical)) {
+        signals.add("ptc:Object.keys(tools)");
+        ptc = true;
+      }
+      if (!ptc && VERCEL_LEXICAL.test(lexical)) {
+        // TypeScript plus a `tools` reference and no other dialect's signal is the
+        // Vercel AI SDK code mode shape (`js` field, `tools.<name>` calls).
+        signals.add("vercel:tools.<name>");
+      }
     }
   }
 

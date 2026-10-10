@@ -10,7 +10,7 @@
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-206%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-318%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** 是一个开源（MIT 协议）、TypeScript 编写的
@@ -70,6 +70,7 @@ const x = searchTools(...) →  const x = await searchTools(...)
 | `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
 | `vercel-typescript` | `const c: string = "London";` | `const c = "London";` |
 | `ptc-typescript` | `let total: number = 0;` | `let total = 0;` |
+| `strip-typescript` | `const n: number = 1;`（没有方言认领它） | `const n = 1;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
@@ -80,13 +81,17 @@ const x = searchTools(...) →  const x = await searchTools(...)
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
 每个 pass 都是独立、幂等、尽力而为的。无法解析的脚本会原样返回并附带一条警告，
-所以本扩展的 bug 永远不会阻断一次工具调用。
+所以本扩展的 bug 永远不会阻断一次工具调用。JSON 工具调用程序是编译器生成的
+JavaScript：它会跳过各方言 pass，只在结果上运行 `await-async-calls` 和
+`rewrite-tool-identifiers`。
 
 ## 方言
 
 编译器会检测脚本使用的是哪种 codemode 方言，并将其翻译为 Pi。
 
-`detectCodemodeDialect(code)` 返回 `pi`、`opencode`、`cloudflare`、`tanstack`、`vercel`、`ptc` 或 `unknown`，并附带命中的信号。
+`detectCodemodeDialect(code, { hadOptionsLine })` 返回 `pi`、`opencode`、`cloudflare`、
+`tanstack`、`vercel`、`ptc` 或 `unknown`，并附带命中的信号；第二个参数恢复了
+options pass 移除的 `@options` 信号。
 OpenCode 独有信号包括 `$codemode`、`tools.<ns>.<tool>` 路径（Pi 的工具永远是单层的），
 以及 `Object.keys(tools)`。Cloudflare 信号包括 `codemode.<tool>` / `codemode.search`
 平台调用，以及裸的 `async () => { … }` 程序包装。TanStack 信号是裸的
@@ -109,11 +114,13 @@ TypeScript 回退，因此不带任何这些信号的 PTC 程序仍会正确地�
 | `tools.mcp.dev.radius.search({…})` | `tools.mcp__dev_radius__search({…})`（模糊名称匹配） |
 | `await tools.$codemode.search({ query, namespace, limit, offset })` | 一个 `await searchTools(...)` 垫片，返回 `{ items: [{ path, description, signature }], remaining, next }` |
 | `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
+| `Object.keys(tools.<ns>)` | 同一份 `ALL_TOOLS` 名称列表，按命名空间前缀过滤（普通与 `mcp__` 两种拼写） |
+| `for...in tools.<ns>` | 不改写 —— 发出警告并指向 `ALL_TOOLS.map((t) => t.name)` |
 | `return value`、`console.log`、`Promise.all`、顶层 `await` | 本身就是合法 Pi —— 原样保留 |
 
 工具路径解析需要 Pi 的实时目录，因此扩展会把
 `pi.getAllTools().map((t) => t.name)` 传入编译器。先尝试精确分隔符
-（`.`、`__`、`_`、`/`、`-`），再做归一化后的模糊匹配
+（`.`、`__`、`_`、`/`、`-`，每种还会再试 MCP 的 `mcp__` 前缀），再做归一化后的模糊匹配
 （`mcp.dev.radius.search` ↔ `mcp__dev_radius__search`）。目录中匹配不到的路径会被
 确定性地展平，并记录到 `warnings` 中。
 
@@ -142,6 +149,10 @@ Cloudflare 的工具命名规则（`sanitizeToolName`）与 Pi 的 `toCodemodeId
 `tools._d_render()`。脚本自身绑定的名字（`const state = { … }`）与无法解析的
 provider 不会被改动（后者在提供了目录时会给出警告）；位置参数的 provider
 调用（`state.readFile("/path")`）原样保留，因为编译器无从得知 Pi 的参数名。
+两个已知限制：只使用具名 provider 的语句式程序（没有 `codemode.*` 调用、没有
+async-arrow 包装）会被检测为 `unknown`（检测不看目录），于是 provider 改写永远不会
+运行；`export default async () => {}` 也会原样保留 —— `unwrap-iife` 只解包单独的
+表达式语句。
 
 当方言为 `tanstack` 时，会翻译 [`@tanstack/ai-code-mode`](https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
 程序。源码是 TypeScript，因此 `tanstack-typescript` 先运行（`unwrap-iife` 在其后运行，
@@ -172,21 +183,24 @@ provider 不会被改动（后者在提供了目录时会给出警告）；位�
 
 在 Vercel 中，不是合法 JS 标识符的原始工具名会保留方括号访问；
 `compileVercelDialect` 对照实时目录把它们映射为 Pi 标识符，无法解析的名字会被
-确定性展平（并给出警告）—— 与 OpenCode 相同的回退策略。该方言没有
+确定性展平（并给出警告）—— 与 OpenCode 相同的回退策略。纯 JavaScript 的 Vercel
+程序可以被解析，因此 `vercel-dialect` 不会运行：其中的特殊方括号访问仍由
+`rewrite-tool-identifiers` 对照目录解析，但不会给出无法解析的警告。该方言没有
 `searchTools` / `ALL_TOOLS` / `codemode.*` 辅助能力；工具发现内嵌在工具描述中，
 因此不需要任何垫片。
 
 当方言为 `ptc` 时，会翻译
 [`@deepseek-ai/dsh-ptc-runtime-node`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/ptc-runtime/ptc-runtime-node)
-程序。DeepSeek 的 PTC 模式工具是 `run_code({ description, code })` —— 参数规范化
-垫片会丢弃多余的 `description`，只留下 Pi 的 `{ code }` —— 而 `code` 是一个
+程序。DeepSeek 的 PTC 模式工具是 `run_code({ description, code })` —— 参数垫片只读
+`code`（或其别名字段），因此多余的 `description` 被忽略，留下 Pi 的 `{ code }` ——
+而 `code` 是一个
 async TypeScript 函数体（仅限可擦除的 TypeScript），因此顶层 `await`/`return`
 有效。源码是 TypeScript，因此 `ptc-typescript` 在 `unwrap-iife` 之前运行，
 随后 `compilePtcDialect` 改写调用：
 
 | DeepSeek PTC | Pi codemode |
 |---|---|
-| `{ code, description }` | `{ code }`（丢弃 `description`） |
+| `{ code, description }` | `{ code }`（忽略 `description`） |
 | `await tools["web-search"]({ q })` | `await tools.web_search({ q })` —— 对照实时工具目录解析 |
 | `Object.keys(tools)` | `ALL_TOOLS.map((t) => t.name)` |
 | `const c: string = "London";` | `const c = "London";` —— 通过 sucrase 剥离 TypeScript |
@@ -199,16 +213,29 @@ async TypeScript 函数体（仅限可擦除的 TypeScript），因此顶层 `aw
 `ToolCallError`（PTC 失败工具调用的拒绝值，带 `.toolName`）与
 `await import(...)`（PTC 访问 Node API 的方式）在 Pi 中没有对应能力 ——
 Pi 失败的工具调用以普通 `Error` 拒绝，QuickJS 沙箱没有 `import`、`fetch`
-或 Node API —— 因此两者都会发出警告。`console.log(...)` 与 `return` 是
+或 Node API —— 因此两者都会发出警告。只有这两项会警告：`fetch`、`process` 与
+`require` 不会被检测（它们在沙箱中不可用，只会在运行时失败）。`console.log(...)` 与 `return` 是
 PTC 的输出通道，与 Pi 兼容。
 
 ### 它刻意不动的东西
 
-- 被当作字符串数组使用的 `ALL_TOOLS`（语义有歧义）。
 - **非 async 函数**内部缺失的 `await`（插入它会变成语法错误）。
 - `Promise.all` / `allSettled` / `race` / `any` 的成员，以及用
   `.then` / `.catch` / `.finally` 链起来的 promise。
 - 在参数钩子之前就已没通过 pi 校验的信封结构。
+
+### 已知限制
+
+- 只使用具名 provider 的语句式 Cloudflare 程序（没有 `codemode.*` 调用、没有
+  async-arrow 包装）会被检测为 `unknown` —— 检测不看目录 —— 因此 provider
+  改写永远不会运行。
+- 不可擦除的 TypeScript：sucrase 会把 `enum`/`namespace` 编译成可运行的
+  JavaScript，而 DeepSeek 只接受可擦除 TypeScript 的 PTC 参考实现会拒绝它们。
+- 标识符冲突（`web-search` / `web_search`）：解析是确定性的（以写下的原始名字
+  为准）且不发警告，但两者都映射到同一个 `tools.web_search`。
+- 动态方括号访问（`tools[expr]`，非常量属性）永远不会被改写，且静默无提示。
+- `ALL_TOOLS` 的元素是 `{ name, description }` 对象；把它们当字符串用的模型代码
+  （例如 `ALL_TOOLS.filter(n => /x/.test(n))`）不会被规范化（真实会话中观察到）。
 
 ## 安装
 
@@ -216,10 +243,7 @@ PTC 的输出通道，与 Pi 兼容。
 因此有资格进入包展示廊）。用 `pi` CLI 安装，它会自行注册 `codemode` 工具：
 
 ```bash
-# 从 npm 安装（已发布的包）
-pi install npm:pi-codemode-guard
-
-# 从 git 安装（发布前的推荐方式）
+# 从 git 安装（推荐；尚未发布到 npm）
 pi install git:github.com/tychenjiajun/pi-codemode-guard
 
 # 从本地检出安装
@@ -281,7 +305,7 @@ interface PiCodemodeGuardDetails {
 
 markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`source`、
 `javascript`、…）、宽松的 `/* @options: … */` 行、多余的 async IIFE 包装、
-异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode / Cloudflare
+方言之外的零散 TypeScript 注解、异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode / Cloudflare
 / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC code mode 方言的工具路径与命名空间 —— 每一项都是独立、幂等的编译 pass。
 
 ### 本扩展的 bug 会弄坏我的脚本吗？
@@ -300,7 +324,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 206 个单元测试
+pnpm test        # 318 个单元测试
 pnpm typecheck
 ```
 

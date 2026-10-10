@@ -11,7 +11,8 @@
 //   codemode.getWeather({ ... })                  tools.getWeather({ ... })
 //   state.readFile("/path")   (provider ns)       tools.state_readFile({ ... })
 //   codemode.search("query")   -> { results }     searchTools("query") -> { items }
-//   codemode.describe(path)    -> { types }       describeTool(path) -> { declaration }
+//   codemode.describe(path)    -> { types }       describeTool(path) -> string | undefined
+//                                                (description + declaration in one sample)
 //   codemode.run(name) / codemode.step(...)       (no equivalent)
 //
 // The async-arrow wrapper is already removed by `unwrap-iife`; this pass handles
@@ -85,32 +86,80 @@ export function cloudflareUnsanitize(identifier: string): string {
 /**
  * A shim for `codemode.search(query)`. Takes Cloudflare's positional query and
  * returns Cloudflare's `{ results, total, truncated }` shape, backed by Pi's
- * `searchTools`.
+ * `searchTools`. Each result carries the rank as `score` (higher = better);
+ * `connector`/`method` split at the last `__`, with the whole path as a
+ * non-empty connector fallback when the name has no separator. Pi's
+ * `searchTools` reports no total, so `total` is the returned count and
+ * `truncated` means pi filled the request limit.
  */
 export const CLOUDFLARE_SEARCH_SHIM = `(async (__cm_query) => {
-  const __cm_found = (await searchTools(String(__cm_query ?? ""))) ?? [];
-  const __cm_results = __cm_found.map((__cm_tool) => {
+  const __cm_found = (await searchTools(String(__cm_query ?? ""), { limit: 50 })) ?? [];
+  const __cm_truncated = __cm_found.length >= 50;
+  const __cm_results = __cm_found.map((__cm_tool, __cm_i) => {
     const __cm_path = String(__cm_tool.name ?? "");
-    const __cm_split = __cm_path.indexOf("__");
+    const __cm_split = __cm_path.lastIndexOf("__");
     return {
       path: __cm_path,
-      connector: __cm_split === -1 ? "" : __cm_path.slice(0, __cm_split),
-      method: __cm_split === -1 ? __cm_path : __cm_path.slice(__cm_split + 2),
+      connector: __cm_split > 0 ? __cm_path.slice(0, __cm_split) : __cm_path,
+      method: __cm_split > 0 ? __cm_path.slice(__cm_split + 2) : __cm_path,
       description: __cm_tool.description,
+      score: __cm_i,
       kind: "method"
     };
   });
-  return { results: __cm_results, total: __cm_results.length, truncated: false };
+  return { results: __cm_results, total: __cm_results.length, truncated: __cm_truncated };
 })`;
 
 /**
  * A shim for `codemode.describe(path)`. Returns Cloudflare's
- * `{ path, description, types }` shape, backed by Pi's `describeTool`.
+ * `{ path, description, types }` shape, backed by Pi's `describeTool`, which
+ * resolves to a single string (`"<description>\n\ncodemode tool declaration:\n```ts…```"`)
+ * or `undefined`. The leading description line becomes `description`, the whole
+ * sample becomes `types`. On `undefined` it falls back to `describeNamespace`,
+ * and finally to a `"<path> not found."` message — best-effort, never throws.
  */
 export const CLOUDFLARE_DESCRIBE_SHIM = `(async (__cm_target) => {
   const __cm_path = String(__cm_target ?? "");
-  const __cm_tool = await describeTool(__cm_path);
-  return { path: __cm_path, description: __cm_tool?.description, types: __cm_tool?.declaration ?? "", kind: "method" };
+  let __cm_sample;
+  try {
+    __cm_sample = await describeTool(__cm_path);
+  } catch {
+    __cm_sample = undefined;
+  }
+  if (typeof __cm_sample === "string") {
+    const __cm_nl = __cm_sample.indexOf("\\n");
+    const __cm_head = __cm_nl === -1 ? __cm_sample : __cm_sample.slice(0, __cm_nl);
+    const __cm_description = __cm_head.startsWith("\`\`\`") || __cm_head.startsWith("{") ? "" : __cm_head;
+    return { path: __cm_path, description: __cm_description, types: __cm_sample, kind: "method" };
+  }
+  if (__cm_sample && typeof __cm_sample === "object") {
+    return {
+      path: __cm_path,
+      description: __cm_sample.description ?? "",
+      types: __cm_sample.declaration ?? __cm_sample.types ?? "",
+      kind: "method"
+    };
+  }
+  let __cm_namespace;
+  try {
+    __cm_namespace = await describeNamespace(__cm_path);
+  } catch {
+    __cm_namespace = undefined;
+  }
+  if (__cm_namespace && typeof __cm_namespace === "object") {
+    const __cm_tools = Array.isArray(__cm_namespace.tools) ? __cm_namespace.tools : [];
+    const __cm_types = __cm_tools
+      .map((__cm_t) => (typeof __cm_t === "string" ? __cm_t : String(__cm_t?.name ?? "")))
+      .filter(Boolean)
+      .join("\\n");
+    return {
+      path: __cm_path,
+      description: __cm_namespace.description ?? __cm_path,
+      types: __cm_types,
+      kind: "connector"
+    };
+  }
+  return { path: __cm_path, description: __cm_path + " not found.", types: "", kind: "method" };
 })`;
 
 interface CloudflareCatalog {

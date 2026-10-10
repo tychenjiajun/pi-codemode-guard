@@ -140,4 +140,82 @@ describe("compileCloudflareDialect", () => {
     expect(twice.changed).toBe(false);
     expect(twice.code).toBe(once.code);
   });
+
+  it("executes the describe shim against pi's string-returning describeTool", async () => {
+    const result = compileCloudflareDialect("const docs = await codemode.describe('gh.list_issues');", {
+      tools: [],
+    });
+    const sample = "Lists issues.\n\ncodemode tool declaration:\n```ts\ndeclared(): void\n```";
+    const execute = new Function("describeTool", "describeNamespace", `return (async () => { ${result.code} return docs; })();`);
+    const docs = await execute(
+      async () => sample,
+      async () => undefined,
+    );
+    expect(docs.path).toBe("gh.list_issues");
+    expect(docs.description).toBe("Lists issues.");
+    expect(docs.types).toBe(sample);
+    expect(docs.kind).toBe("method");
+  });
+
+  it("falls back to describeNamespace when describeTool returns undefined", async () => {
+    const result = compileCloudflareDialect("const docs = await codemode.describe('gh');", { tools: [] });
+    const execute = new Function("describeTool", "describeNamespace", `return (async () => { ${result.code} return docs; })();`);
+    const docs = await execute(
+      async () => undefined,
+      async () => ({ name: "gh", description: "GitHub namespace", tools: [{ name: "gh__list_issues" }] }),
+    );
+    expect(docs.description).toBe("GitHub namespace");
+    expect(docs.types).toContain("gh__list_issues");
+  });
+
+  it("reports not-found when both describe helpers come back empty", async () => {
+    const result = compileCloudflareDialect("const docs = await codemode.describe('gh.nope');", { tools: [] });
+    const execute = new Function("describeTool", "describeNamespace", `return (async () => { ${result.code} return docs; })();`);
+    const docs = await execute(
+      async () => undefined,
+      async () => undefined,
+    );
+    expect(docs.description).toBe("gh.nope not found.");
+    expect(docs.types).toBe("");
+  });
+
+  it("executes the search shim with a rank score and last-separator connector", async () => {
+    const result = compileCloudflareDialect('const matches = await codemode.search("issue");', { tools: [] });
+    const small = [
+      { name: "mcp__github__list_issues", description: "List issues" },
+      { name: "web_search", description: "Search the web" },
+      { name: "web", description: "No separator" },
+    ];
+    const execute = new Function("searchTools", `return (async () => { ${result.code} return matches; })();`);
+    const seen: Array<{ limit?: number }> = [];
+    const matches = await execute(async (_query: string, options: { limit: number }) => {
+      seen.push(options);
+      return small.slice(0, options.limit);
+    });
+    expect(seen[0]).toEqual({ limit: 50 });
+    expect(matches.results[0]).toMatchObject({
+      path: "mcp__github__list_issues",
+      connector: "mcp__github",
+      method: "list_issues",
+      description: "List issues",
+      score: 0,
+      kind: "method",
+    });
+    expect(matches.results[1]).toMatchObject({ connector: "web_search", method: "web_search", score: 1 });
+    expect(matches.results[2]).toMatchObject({ connector: "web", method: "web", score: 2 });
+    expect(matches.total).toBe(3);
+    expect(matches.truncated).toBe(false);
+  });
+
+  it("marks the search shim truncated when pi returns the full limit", async () => {
+    const result = compileCloudflareDialect('const matches = await codemode.search("issue");', { tools: [] });
+    const big = Array.from({ length: 60 }, (_, i) => ({ name: `svc__op${i}`, description: "" }));
+    const execute = new Function("searchTools", `return (async () => { ${result.code} return matches; })();`);
+    const matches = await execute(async (_query: string, options: { limit: number }) => big.slice(0, options.limit));
+    expect(matches.results).toHaveLength(50);
+    expect(matches.total).toBe(50);
+    expect(matches.truncated).toBe(true);
+    expect(matches.results[0].score).toBe(0);
+    expect(matches.results[49].score).toBe(49);
+  });
 });

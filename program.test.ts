@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { parseScript } from "./parse.ts";
 import { CodemodeProgramError, looksLikeToolProgram, programToJs, toToolCall } from "./program.ts";
 
 describe("toToolCall", () => {
@@ -84,6 +85,51 @@ describe("programToJs", () => {
 
   it("throws on an unrecognized step", () => {
     expect(() => programToJs([{ notATool: 1, another: 2 }])).toThrow(CodemodeProgramError);
+  });
+
+  it("guesses a path argument key for read-like tools", () => {
+    expect(toToolCall({ tool: "read", args: "package.json" })).toEqual({
+      tool: "read",
+      args: { path: "package.json" },
+    });
+    expect(toToolCall({ tool: "mcp__fs__read_file", args: "a.txt" })).toEqual({
+      tool: "mcp__fs__read_file",
+      args: { path: "a.txt" },
+    });
+  });
+
+  it("guesses path vs content for write-like tools", () => {
+    expect(toToolCall({ tool: "write", args: "/tmp/a.txt" })).toEqual({
+      tool: "write",
+      args: { path: "/tmp/a.txt" },
+    });
+    expect(toToolCall({ tool: "write", args: "hello\nworld" })).toEqual({
+      tool: "write",
+      args: { content: "hello\nworld" },
+    });
+  });
+
+  it("keeps command as the fallback key for shell-like tools", () => {
+    expect(toToolCall({ tool: "bash", args: "ls -la" })).toEqual({
+      tool: "bash",
+      args: { command: "ls -la" },
+    });
+  });
+
+  it("serializes quotes, backslashes, and line separators safely", () => {
+    const args = { command: 'echo "a" \\ b\nnext\u2028line\u2029end' };
+    const code = programToJs([{ tool: "bash", args }]);
+    expect(code).toContain('\\"a\\"');
+    expect(code).toContain("\\\\ b");
+    expect(code).toContain("\\u2028");
+    expect(code).toContain("\\u2029");
+    expect(code).not.toContain("\u2028");
+    expect(code).not.toContain("\u2029");
+    expect(parseScript(code)).toBeDefined();
+    // Round-trips to the original value.
+    const match = code.match(/await tools\.bash\((.*)\);/);
+    expect(match?.[1]).toBeDefined();
+    expect(JSON.parse(match![1]!)).toEqual(args);
   });
 });
 

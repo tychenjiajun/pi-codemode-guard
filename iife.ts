@@ -31,10 +31,15 @@ function unwrapWrapper(expression: AstNode): AstNode {
 
 function asyncFunctionBody(expression: AstNode): AstNode | undefined {
   const inner = unwrapWrapper(expression);
+  // Only a zero-parameter wrapper may be unwrapped: the parameters are not
+  // bound anywhere in the script body, so `(async (x = 42) => { return x })()`
+  // would unwrap to a `ReferenceError`.
+  const zeroParams = (fn: AstNode): AstNode | undefined =>
+    ((fn.params as AstNode[] | undefined) ?? []).length === 0 ? fn : undefined;
   if (inner.type === "CallExpression" && Array.isArray(inner.arguments) && (inner.arguments as unknown[]).length === 0) {
     const callee = inner.callee as AstNode;
     if (callee.type === "ArrowFunctionExpression" || callee.type === "FunctionExpression") {
-      return callee.async === true ? callee : undefined;
+      return callee.async === true ? zeroParams(callee) : undefined;
     }
     return undefined;
   }
@@ -42,7 +47,7 @@ function asyncFunctionBody(expression: AstNode): AstNode | undefined {
     (inner.type === "ArrowFunctionExpression" || inner.type === "FunctionExpression") &&
     inner.async === true
   ) {
-    return inner;
+    return zeroParams(inner);
   }
   return undefined;
 }

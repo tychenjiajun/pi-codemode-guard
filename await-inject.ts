@@ -19,6 +19,7 @@
 // `Promise.all`/`allSettled`/`race`/`any`, promises chained with
 // `.then`/`.catch`/`.finally`, and calls inside a non-async function.
 
+import { collectBoundNames } from "./catalog.ts";
 import { childNodes, isFunctionNode, parseScript, type AstNode } from "./parse.ts";
 
 /** Promise-returning globals. */
@@ -57,8 +58,21 @@ interface Insertion {
   readonly order: number;
 }
 
+/**
+ * Why a position may or may not accept `await`:
+ *
+ *   * `async`  — the script body or an async function (top-level `await` works)
+ *   * `sync`   — a non-async function
+ *   * `illegal`— a class body position (heritage, field initializer, static
+ *               block, computed key): `await` is a SyntaxError there even at
+ *               the top level of the script
+ */
+type ScopeKind = "async" | "sync" | "illegal";
+
 interface WalkState {
-  readonly asyncStack: boolean[];
+  readonly scopes: ScopeKind[];
+  /** Names the script binds itself, so a local `tools` is not mistaken for Pi's global. */
+  readonly bound: ReadonlySet<string>;
   readonly promiseContainers: Set<AstNode>;
   readonly insertions: Insertion[];
 }
@@ -103,9 +117,18 @@ export function isAsyncCallTarget(node: AstNode): boolean {
   return false;
 }
 
-function nearestFunctionIsAsync(state: WalkState): boolean {
-  const innermost = state.asyncStack[state.asyncStack.length - 1];
-  return innermost === undefined || innermost;
+function nearestScope(state: WalkState): ScopeKind {
+  return state.scopes[state.scopes.length - 1] ?? "async";
+}
+
+/** The scope a node introduces, when it introduces one. */
+function scopeFor(node: AstNode): ScopeKind | undefined {
+  if (isFunctionNode(node)) return node.async === true ? "async" : "sync";
+  // `class A extends <expr> {}`, field initializers, static blocks, and
+  // computed keys all live under the class node, and none of them allow
+  // `await` — not even at the top level of the script.
+  if (node.type === "ClassDeclaration" || node.type === "ClassExpression") return "illegal";
+  return undefined;
 }
 
 function registerPromiseContainer(node: AstNode, state: WalkState): void {
@@ -117,7 +140,14 @@ function registerPromiseContainer(node: AstNode, state: WalkState): void {
 
 function shouldAwait(call: AstNode, parents: readonly AstNode[], state: WalkState): boolean {
   if (!isAsyncCallTarget(call)) return false;
-  if (!nearestFunctionIsAsync(state)) return false;
+  if (nearestScope(state) !== "async") return false;
+
+  // A name the script binds itself (`const tools = {...}`) is not Pi's global.
+  const info = memberInfo(call.callee as AstNode);
+  if (info) {
+    const root = info.object ?? info.property;
+    if (state.bound.has(root)) return false;
+  }
 
   const parent = parents[parents.length - 1];
   if (!parent) return true;
@@ -149,12 +179,15 @@ function needsParentheses(call: AstNode, parent: AstNode | undefined): boolean {
   if (parent.type === "CallExpression") return parent.callee === call;
   if (parent.type === "NewExpression") return parent.callee === call;
   if (parent.type === "TaggedTemplateExpression") return parent.tag === call;
+  // `await x ** 2` is a SyntaxError (a unary expression may not be the base of
+  // `**`); `(await x) ** 2` is fine. The right-hand side needs no parentheses.
+  if (parent.type === "BinaryExpression") return parent.operator === "**" && parent.left === call;
   return false;
 }
 
 function walk(node: AstNode, parents: readonly AstNode[], state: WalkState): void {
-  const isFunction = isFunctionNode(node);
-  if (isFunction) state.asyncStack.push(node.async === true);
+  const scope = scopeFor(node);
+  if (scope) state.scopes.push(scope);
 
   if (node.type === "CallExpression") {
     registerPromiseContainer(node, state);
@@ -170,7 +203,7 @@ function walk(node: AstNode, parents: readonly AstNode[], state: WalkState): voi
   const nextParents = [...parents, node];
   for (const child of childNodes(node)) walk(child, nextParents, state);
 
-  if (isFunction) state.asyncStack.pop();
+  if (scope) state.scopes.pop();
 }
 
 /**
@@ -181,7 +214,12 @@ export function injectAwait(code: string): AwaitInjectionResult | undefined {
   const ast = parseScript(code);
   if (!ast) return undefined;
 
-  const state: WalkState = { asyncStack: [], promiseContainers: new Set(), insertions: [] };
+  const state: WalkState = {
+    scopes: [],
+    bound: collectBoundNames(ast),
+    promiseContainers: new Set(),
+    insertions: [],
+  };
   walk(ast, [], state);
 
   if (state.insertions.length === 0) return { code, inserted: 0 };

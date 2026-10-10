@@ -20,6 +20,18 @@ import { transform } from "sucrase";
 const WRAPPER_START = "___PI_GUARD_TS_WRAPPER_START___";
 const WRAPPER_END = "___PI_GUARD_TS_WRAPPER_END___";
 
+/**
+ * Pick wrapper markers that do not occur in the input. A literal marker in the
+ * user's script would otherwise be found first by `indexOf` and silently
+ * truncate the body at that point — the one silent code-loss path in the
+ * compiler. Deterministic (derived from the input), so the pass stays pure.
+ */
+function uniqueMarker(code: string, base: string): string {
+  let marker = base;
+  while (code.includes(marker)) marker += "_";
+  return marker;
+}
+
 export interface TypeScriptStripResult {
   readonly code: string;
   readonly changed: boolean;
@@ -33,7 +45,9 @@ const FAILED: readonly string[] = ["could not strip TypeScript syntax; left unch
  * JavaScript. A no-op on already-JavaScript input.
  */
 export function stripTypeScriptSyntax(code: string): TypeScriptStripResult {
-  const wrapped = `async function ${WRAPPER_START}() {\n${code}\n}; ${WRAPPER_END}`;
+  const startMarker = uniqueMarker(code, WRAPPER_START);
+  const endMarkerText = uniqueMarker(code, WRAPPER_END);
+  const wrapped = `async function ${startMarker}() {\n${code}\n}; ${endMarkerText}`;
 
   let transformed: string;
   try {
@@ -43,9 +57,9 @@ export function stripTypeScriptSyntax(code: string): TypeScriptStripResult {
     return { code, changed: false, warnings: [`could not strip TypeScript syntax (${reason}); left unchanged`] };
   }
 
-  const functionStart = transformed.indexOf(`async function ${WRAPPER_START}()`);
+  const functionStart = transformed.indexOf(`async function ${startMarker}()`);
   const openBrace = functionStart === -1 ? -1 : transformed.indexOf("{", functionStart);
-  const endMarker = transformed.indexOf(WRAPPER_END);
+  const endMarker = transformed.indexOf(endMarkerText);
   if (openBrace === -1 || endMarker === -1 || endMarker < openBrace) {
     return { code, changed: false, warnings: FAILED };
   }

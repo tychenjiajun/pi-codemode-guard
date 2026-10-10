@@ -44,4 +44,26 @@ describe("unwrapIIFE", () => {
     const code = "const x = 1;";
     expect(unwrapIIFE(code).changed).toBe(false);
   });
+
+  it("does not unwrap an IIFE with a defaulted parameter", () => {
+    const code = "(async (x = 42) => { return x; })();";
+    const result = unwrapIIFE(code);
+    expect(result.changed).toBe(false);
+    expect(result.code).toBe(code);
+  });
+
+  it("does not unwrap an IIFE with any parameter", () => {
+    const code = "(async (x) => { return x; })();";
+    expect(unwrapIIFE(code).changed).toBe(false);
+  });
+
+  it("does not unwrap a bare async arrow that takes parameters", () => {
+    const code = "async (x) => { return x; }";
+    expect(unwrapIIFE(code).changed).toBe(false);
+  });
+
+  it("does not unwrap a named async function expression with parameters", () => {
+    const code = "(async function f(x) { return x; })();";
+    expect(unwrapIIFE(code).changed).toBe(false);
+  });
 });

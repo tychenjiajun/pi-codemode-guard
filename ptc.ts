@@ -97,11 +97,21 @@ export function compilePtcDialect(code: string, options: PtcCompileOptions = {})
       if (chain?.root === "Object" && chain.segments.join(".") === "keys") {
         const first = (node.arguments as AstNode[])[0];
         const target = first ? collectChain(first) : undefined;
-        if (target?.root === "tools" && target.segments.length === 0) {
-          const text = "ALL_TOOLS.map((__ptc_tool) => __ptc_tool.name)";
-          if (code.slice(node.start, node.end) !== text) {
-            replacements.push({ start: node.start, end: node.end, text });
-            rewrites++;
+        if (target?.root === "tools") {
+          if (target.segments.length === 0) {
+            const text = "ALL_TOOLS.map((__ptc_tool) => __ptc_tool.name)";
+            if (code.slice(node.start, node.end) !== text) {
+              replacements.push({ start: node.start, end: node.end, text });
+              rewrites++;
+            }
+          } else if (!warned.has(`object-keys:${target.segments.join(".")}`)) {
+            // Pi's `tools` is flat: `tools.<ns>` is `undefined`, so this would
+            // throw `TypeError: Cannot convert undefined or null to object`
+            // at runtime. There is no namespace to enumerate — warn loudly.
+            warned.add(`object-keys:${target.segments.join(".")}`);
+            warnings.push(
+              `\`Object.keys(tools.${target.segments.join(".")})\` will throw at runtime: Pi's \`tools\` is flat and has no \`${target.segments[0]}\` namespace; list names with \`ALL_TOOLS.map((t) => t.name)\` instead`,
+            );
           }
         }
       }
