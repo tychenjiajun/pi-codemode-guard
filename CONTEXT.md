@@ -121,9 +121,13 @@ prefixes digit-leading names (`3d-render` → `_3d_render`), and suffixes reserv
 words (`delete` → `delete_`). The catalog is therefore keyed by both spellings,
 so `codemode.delete_()` maps back to `tools.delete()` and `codemode._3d_render()`
 to `tools._d_render()`. Names bound by the script (`const state = { … }`) and
-unresolved providers are left untouched (the latter with a `warning` when a
-catalog is present); positional provider arguments are preserved verbatim because
-the compiler cannot know Pi's parameter names.
+unresolved providers are left untouched. An unresolved provider warns only when
+the detected dialect is `cloudflare` (key `cloudflare-provider:<path>`); in any
+other dialect it stays silent unless the trailing segment is a live Pi tool,
+which gets the `provider-not-a-tool:<path>` hint (`foo.read` → "call
+`tools.read(…)`"), so `performance.now()` and `foo.bar()` never warn. Positional
+provider arguments are preserved verbatim because the compiler cannot know Pi's
+parameter names.
 
 ## TanStack AI code mode dialect (`@tanstack/ai-code-mode`, https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
 
@@ -243,19 +247,27 @@ indistinguishable from Pi, and compiling it as Pi is correct.
 
 PTC and Codex expose globals Pi's QuickJS sandbox does not define — PTC's
 `ToolCallError`, and Codex's `audio`, `generatedImage`, `notify`,
-`yield_control`, `setTimeout`, and `clearTimeout`. The guard cannot translate
-them, so it **leaves the call in place** (never deletes it: silent code loss
+`yield_control`, `setTimeout`, and `clearTimeout` — and the same table carries a
+`runtime` category for general-purpose APIs other environments provide that
+Pi's QuickJS sandbox also lacks: `setInterval`/`clearInterval`, `Intl`,
+`structuredClone`, `TextEncoder`/`TextDecoder`, `URL`/`URLSearchParams`,
+`crypto`, `fetch`, `process`, `require`, `Buffer`. The guard cannot translate
+any of them, so it **leaves the call in place** (never deletes it: silent code loss
 would move the failure or hang a script) and reports a diagnostic that names a
 replacement where one exists (`generatedImage` → `image(block)`, `notify` →
 `console.log(...)`).
 
 The single source of truth is the `UNSUPPORTED_GLOBALS` table in
-`dialect/signals.ts`. Each row carries the identifier, its dialect, the warning
-`message`, and a `distinctive` flag. The translator warns from the row;
-`detect.ts` derives both its AST check and its raw-text signal from the same
-rows (only `distinctive` names are signals, so a common name like `setTimeout`
-warns without causing a false dialect detection). Add a dialect global there,
-not in three places.
+`dialect/signals.ts`. Each row carries the identifier, its dialect (`codex`,
+`ptc`, or `runtime` — `runtime` is a warning category, never a `CodemodeDialect`,
+so it never appears in the contract's `dialect` field or in a pass id), the warning
+`message`, and a `distinctive` flag. The translator warns from the row once per
+identifier (`unsupported:<name>`), so `crypto.randomUUID()` gets the runtime
+message and never a Cloudflare one; `detect.ts` derives both its AST check and
+its raw-text signal from the same rows (only `distinctive` names are signals —
+every `runtime` row is non-distinctive, so a common name like `setTimeout`
+warns without causing a false dialect detection). Add a dialect global or
+`runtime` row there, not in three places.
 
 ## Pipeline (high level)
 

@@ -10,7 +10,7 @@
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-398%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** 是一个开源（MIT 协议）、TypeScript 编写的
@@ -162,12 +162,18 @@ Cloudflare 的工具命名规则（`sanitizeToolName`）与 Pi 的 `toCodemodeId
 不同：它剥离非法字符而不是替换、给数字开头加 `_`（`3d-render` → `_3d_render`）、
 给保留字加 `_` 后缀（`delete` → `delete_`）。因此目录同时以两种拼写建索引，
 `codemode.delete_()` 能映射回 `tools.delete()`，`codemode._3d_render()` 映射到
-`tools._d_render()`。脚本自身绑定的名字（`const state = { … }`）与无法解析的
-provider 不会被改动（后者在提供了目录时会给出警告）；位置参数的 provider
-调用（`state.readFile("/path")`）原样保留，因为编译器无从得知 Pi 的参数名。
+`tools._d_render()`。脚本自身绑定的名字（`const state = { … }`）永远不会被改动；
+无法解析的 provider 同样保持原样 —— 只有当检测出的方言是 `cloudflare` 时才告警
+（`` could not resolve Cloudflare provider `state.readFile` … ``），其他方言一律
+保持沉默，除非最后一段是 Pi 的实时工具，此时给出提示
+（`` `foo.read` 不是 Pi 工具路径；Pi 有工具 `read` —— 请调用 `tools.read(...)` ``，
+见 `translate.ts`），因此 `performance.now()` 与 `foo.bar()` 完全不会告警。
+位置参数的 provider 调用（`state.readFile("/path")`）原样保留，因为编译器无从得知 Pi 的参数名。
 两个已知限制：只使用具名 provider 的语句式程序（没有 `codemode.*` 调用、没有
-async-arrow 包装）会被检测为 `unknown`（检测不看目录），于是 provider 改写永远不会
-运行；`export default async () => {}` 也会原样保留 —— `unwrap-iife` 只解包单独的
+async-arrow 包装）会被检测为 `unknown`（检测不看目录），于是互操作 `dialect`
+不够准确 —— 但 provider 改写仍会运行：`translate.ts` 会把 Cloudflare 规则应用到
+每条语句上（前提是目录能确认；无法解析的 provider 仅在方言为 `cloudflare` 时
+才告警）；`export default async () => {}` 也会原样保留 —— `unwrap-iife` 只解包单独的
 表达式语句。
 
 当方言为 `tanstack` 时，会翻译 [`@tanstack/ai-code-mode`](https://github.com/TanStack/ai/tree/main/packages/ai-code-mode)
@@ -229,8 +235,11 @@ async TypeScript 函数体（仅限可擦除的 TypeScript），因此顶层 `aw
 `ToolCallError`（PTC 失败工具调用的拒绝值，带 `.toolName`）与
 `await import(...)`（PTC 访问 Node API 的方式）在 Pi 中没有对应能力 ——
 Pi 失败的工具调用以普通 `Error` 拒绝，QuickJS 沙箱没有 `import`、`fetch`
-或 Node API —— 因此两者都会发出警告。只有这两项会警告：`fetch`、`process` 与
-`require` 不会被检测（它们在沙箱中不可用，只会在运行时失败）。`console.log(...)` 与 `return` 是
+或 Node API —— 因此两者都会发出警告。那两项是 PTC 特有的；沙箱缺失的其他全局 ——
+`setInterval`/`clearInterval`、`Intl`、`structuredClone`、`TextEncoder`/`TextDecoder`、
+`URL`/`URLSearchParams`、`crypto`、`fetch`、`process`、`require`、`Buffer` ——
+也会告警，走的是 `UNSUPPORTED_GLOBALS`（`dialect/signals.ts`）中共享的 `runtime`
+行：调用原样保留，并给出 Pi 侧的替代方案。`console.log(...)` 与 `return` 是
 PTC 的输出通道，与 Pi 兼容。
 
 ### OpenAI Codex code mode（`codex-rs/code-mode-runtime`）
@@ -263,7 +272,10 @@ PTC 的输出通道，与 Pi 兼容。
 - 只使用具名 provider 的语句式 Cloudflare 程序（没有 `codemode.*` 调用、没有
   async-arrow 包装）仍会被检测为 `unknown`，所以互操作 `dialect` 不够准确 ——
   但 provider 改写现在仍会运行：`translate.ts` 会把 Cloudflare 规则应用到每条
-  语句上（前提是目录能确认）。
+  语句上（前提是目录能确认；无法解析的 provider 仅在检测方言为 `cloudflare` 时
+  才告警）。
+- 工具句柄的属性访问（`tools.read.length`）只有在实时目录确认了首段时才会被
+  保留，而检测不看目录 —— 因此这类源码在契约里仍会报告 `dialect: "opencode"`。
 - 不可擦除的 TypeScript：sucrase 会把 `enum`/`namespace` 编译成可运行的
   JavaScript，而 DeepSeek 只接受可擦除 TypeScript 的 PTC 参考实现会拒绝它们。
 - 标识符冲突（`web-search` / `web_search`）：解析是确定性的（以写下的原始名字
@@ -359,7 +371,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 357 个单元测试
+pnpm test        # 398 个单元测试
 pnpm typecheck
 ```
 

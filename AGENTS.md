@@ -47,7 +47,7 @@ Root files:
 - `cloudflare-names.ts` — Cloudflare's `sanitizeToolName` rules and `resolveCloudflarePath` (a `resolveToolPath` built with Cloudflare's spelling as the alternate identifier)
 - `replacements.ts` — Shared source-range replacement selection (`selectReplacements`) and splicing (`applyReplacements`)
 - `identifiers.ts` — pi's `toCodemodeIdentifier` rule
-- `pi-globals.ts` — The identifiers pi injects into the codemode sandbox (`PI_SANDBOX_GLOBALS`, `PI_LOOKUP_HELPERS`), shared by the await pass, the detector and the translator
+- `pi-globals.ts` — The identifiers pi injects into the codemode sandbox (`PI_SANDBOX_GLOBALS`, `PI_LOOKUP_HELPERS`) plus `PI_SANDBOX_BUILTINS`, the QuickJS builtins verified present in the sandbox (so the translator never mistakes one for a provider namespace or a bare tool), shared by the await pass, the detector and the translator
 - `shims.ts` — The inline runtime shims the translator splices in (`OPENCODE_SEARCH_SHIM`, `CLOUDFLARE_SEARCH_SHIM`/`DESCRIBE_SHIM`, `CODEMODE_KEYS_SHIM`, `namespaceKeysShim`) and the Cloudflare platform-method registry (`CLOUDFLARE_PLATFORM_SHIMS`/`_UNSUPPORTED`/`_METHODS`)
 - `guards.ts` — `isRecord`
 - `lexical.ts` — `stripComments` for the unparseable-TypeScript signal fallback
@@ -63,7 +63,7 @@ Root files:
 - `rewrite.ts` — catalog-aware `tools["a-b"]` → `tools.a_b` identifier rewriting (`rewriteToolIdentifiers(code, tools?)`)
 
 `dialect/` — detection and translation:
-- `signals.ts` — Shared dialect vocabulary: the `CODEMODE_DIALECTS` list and `CodemodeDialect` type, `TANSTACK_BINDING_PREFIX`, and the `UNSUPPORTED_GLOBALS` table (dialect globals pi's sandbox lacks, with each row's warning message and distinctive-detection flag). The table is the single source of truth for both the detector's signals and the translator's warnings — add a dialect global there
+- `signals.ts` — Shared dialect vocabulary: the `CODEMODE_DIALECTS` list and `CodemodeDialect` type, `TANSTACK_BINDING_PREFIX`, and the `UNSUPPORTED_GLOBALS` table (globals pi's sandbox lacks — either a dialect row (`codex`/`ptc`) or a `runtime` row for a general-purpose API such as `fetch`/`crypto`/`Buffer` — with each row's warning message and distinctive-detection flag). The table is the single source of truth for both the detector's signals and the translator's warnings — add a dialect global or a `runtime` row there
 - `detect.ts` — `detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` (pi/opencode/cloudflare/tanstack/vercel/ptc/codex/unknown); the context flags restore the pragma signals that pass 2's split removed
 - `translate.ts` — The statement-based translator: one AST walk that applies every dialect's rewrite rules by construct shape (OpenCode namespace paths/`$codemode`, Cloudflare `codemode.*`/providers, TanStack `external_<tool>`, Vercel/PTC `tools["raw"]`, Codex-only helpers, bare tool calls). It also exports the single-dialect entry points (`compileOpencodeDialect`, `compileCloudflareDialect`, `compileTanstackDialect`, `compileVercelDialect`, `compilePtcDialect`, `compileCodexDialect`) — thin `only`-scoped wrappers kept for the isolated dialect tests — and re-exports `cloudflareSanitize`/`cloudflareUnsanitize` from `cloudflare-names.ts`. There are no per-dialect compiler modules; the rules live only here
 
@@ -86,7 +86,7 @@ result the guard compiled:
 - `passes` — applied pass ids in order, e.g. `["opencode-dialect(2)", "await-async-calls(2)"]`
 - `parsed` — whether the compiler recognized the source
 - `dialect` — `"pi"`, `"opencode"`, `"cloudflare"`, `"tanstack"`, `"vercel"`, `"ptc"`, `"codex"`, or `"unknown"`
-- `warnings` — non-fatal problems (e.g. a dropped `@options` line or an unresolved OpenCode/Vercel tool path). `translate.ts` deduplicates repeated warnings by key: unresolved tool paths / providers are collapsed per identifier or path (so `tools["nope"]` twice yields one warning), and each Codex/PTC helper warns once
+- `warnings` — non-fatal problems (e.g. a dropped `@options` line or an unresolved OpenCode/Vercel tool path). `translate.ts` deduplicates repeated warnings by key: unresolved tool paths / providers are collapsed per identifier or path (so `tools["nope"]` twice yields one warning), each Codex/PTC helper warns once, and every missing-sandbox global warns once per identifier (`unsupported:<name>`, `runtime` rows included). Unresolved named providers warn only under the `cloudflare` dialect (key `cloudflare-provider:<path>`); any other dialect gets the `` `foo.read` is not a Pi tool path `` hint (key `provider-not-a-tool:<path>`) only when the trailing segment is a live catalog tool, and otherwise stays silent
 
 Consumers must parse via `readPiCodemodeGuardDetails` and fall back to the inline
 content for unknown versions. The shape is additive-only; `dialect` and unknown
@@ -115,19 +115,22 @@ compiler. After the preamble passes it calls
 **every** rule to **every** construct, in one walk. A snippet may therefore mix
 dialects, and each statement is translated by its shape:
 
-- `tools.<ns>.<tool>` → `tools.<identifier>` (OpenCode) — always, when the live catalog confirms the path, otherwise only when the detected dialect is OpenCode (so `tools.read.length` is never flattened)
+- `tools.<ns>.<tool>` → `tools.<identifier>` (OpenCode) — always, when the live catalog confirms the path, otherwise only when the detected dialect is OpenCode (the tool-handle guard below keeps `tools.read.length` intact)
+- tool-handle property access — when `chain.segments.length >= 2` and the first segment alone resolves to a live catalog tool, the chain is a property access on a tool handle (`tools.read.length`, `tools.bash.output`): no rewrite and no warning (`opencodeMember`); `tools.orders.lookup` (first segment not a tool) still flattens. Detection stays catalog-free, so such a source still reports `dialect: "opencode"` in the contract
 - `tools.$codemode.search(...)` → `OPENCODE_SEARCH_SHIM`; other `$codemode.*` warn
-- `codemode.search`/`codemode.describe` → Cloudflare shims; `codemode.run`/`step` and deep `codemode.*` paths warn; `codemode.<tool>` and named providers (`state.writeJson`) → `tools.<identifier>` when the catalog confirms them
+- `codemode.search`/`codemode.describe` → Cloudflare shims; `codemode.run`/`step` and deep `codemode.*` paths warn; `codemode.<tool>` and named providers (`state.writeJson`) → `tools.<identifier>` when the catalog confirms them, and an unresolved named provider warns only when the detected dialect is `cloudflare` (otherwise silent unless the trailing segment is a live catalog tool, which gets the `provider-not-a-tool:<path>` hint), so `performance.now()`/`foo.bar()` never warn
 - `external_<tool>` → `tools.<identifier>` (TanStack), scope-aware so a local/parameter binding is left alone
 - `tools["raw-name"]` → `tools.<identifier>` (Vercel/PTC) — only for the vercel/ptc dialect (plain JavaScript brackets are handled by `rewrite-tool-identifiers`, warning-free)
 - `Object.keys(tools)` → `ALL_TOOLS.map((t) => t.name)`; the spelling (`__cm_tool` vs `__ptc_tool`) and the `Object.keys(tools.<ns>)` behavior follow the detected dialect (OpenCode filters, PTC warns)
 - `for...in tools.<ns>` → opencode warning
 - Codex-only helpers (`audio`, `generatedImage`, `notify`, `yield_control`, `setTimeout`, `clearTimeout`) → warnings, guarded by local bindings
+- globals the sandbox lacks (`setInterval`/`clearInterval`, `Intl`, `structuredClone`, `TextEncoder`/`TextDecoder`, `URL`/`URLSearchParams`, `crypto`, `fetch`, `process`, `require`, `Buffer` — the `runtime` group in `UNSUPPORTED_GLOBALS`) → one warning per identifier, never a rewrite; `runtime` only ever warns, so it never becomes a pass id
 - bare `search(...)` where `search` is a live catalog tool and is not shadowed → `tools.search(...)` (the `bare` group)
 
 The detected `dialect` is still passed in, but only to pick the TypeScript pass,
 to disambiguate the two constructs OpenCode and PTC share (`Object.keys(tools)`
-and unresolved bracket names), and for the interop contract. `compile.ts`
+and unresolved bracket names), to pick the unresolved-provider warning policy,
+and for the interop contract. `compile.ts`
 reports `translate-statements` plus a `<dialect>-dialect(N)` pass id per group
 that fired, so one compile can list several dialect passes.
 
@@ -141,7 +144,9 @@ The `tools.<ns>.<tool>` → `tools.<identifier>` mapping needs Pi's live catalog
 so `compileCodemodeSource(input, { tools: pi.getAllTools().map((t) => t.name) })`
 must be given it. Resolution order: exact separators (`.`, `__`, `_`, `/`, `-`),
 each also tried with the MCP `mcp__` prefix, then a fuzzy `normalizeToolKey`
-match (with and without `mcp_`), then a deterministic flatten with a warning.
+match (with and without `mcp_`), then a deterministic flatten with a warning —
+unless the first segment alone is a live tool: `tools.read.length` is a property
+access on the tool handle and is left alone (no rewrite, no warning).
 `tools.$codemode.search(...)` becomes an inline `searchTools(...)` shim echoing
 OpenCode's `{ items, remaining, next }` shape. `Object.keys(tools)` becomes
 `ALL_TOOLS.map((t) => t.name)`; `Object.keys(tools.<ns>)` is rewritten to that
@@ -159,7 +164,11 @@ wrapper before `compileCloudflareDialect` runs. `codemode.search` and
 `codemode.describe` become inline `searchTools`/`describeTool` shims echoing
 Cloudflare's shapes; `codemode.run`/`codemode.step` have no Pi equivalent and
 warn. Named providers are only rewritten when the live catalog confirms them, so
-JS globals and locally bound objects are never touched. Cloudflare's
+JS globals and locally bound objects are never touched; an unresolved provider
+path emits the `could not resolve Cloudflare provider …` diagnostic only when
+the detected dialect is `cloudflare` — any other dialect stays silent unless
+the trailing segment is a live catalog tool, which gets a
+`` `foo.read` … call `tools.read(…)` `` hint. Cloudflare's
 `sanitizeToolName` (digit-leading prefix, reserved-word suffix) differs from Pi's
 `toCodemodeIdentifier`, so the catalog is also keyed by the Cloudflare spelling.
 Two known limitations: detection is catalog-free, so a statement-form program
@@ -222,10 +231,12 @@ names and becomes `ALL_TOOLS.map((t) => t.name)`. The source is TypeScript, so
 tool call rejects with `ToolCallError` (a PTC-only global with `.toolName`) —
 Pi has no equivalent (a failed call rejects with a plain `Error`), so it warns;
 `await import(...)` reaches Node APIs Pi's QuickJS sandbox does not have, so that
-warns too. Only those two warn: `fetch`, `process`, and `require` are not
-detected — known limitation, they are unavailable in the sandbox and fail at
-runtime instead of producing a warning. `console.log(...)` and `return` are
-PTC's output channels and are Pi-compatible.
+warns too. Those two are PTC-specific; everything else the sandbox lacks —
+`fetch`, `process`, `require`, `Buffer`, `setInterval`, `Intl`,
+`structuredClone`, … — warns through the shared `runtime` rows of
+`UNSUPPORTED_GLOBALS` instead (all `runtime` rows are non-distinctive, so
+detection is unaffected). `console.log(...)` and `return` are PTC's output
+channels and are Pi-compatible.
 
 Detection signal: `ptc:ToolCallError`, `ptc:import()`, and
 `ptc:Object.keys(tools)` — the last only when acorn cannot parse the
@@ -265,7 +276,11 @@ indistinguishable from Pi and is compiled as Pi (which is correct).
   `codemode.*`, no async-arrow wrapper) still detect as `unknown`, so the
   interop `dialect` is inaccurate — but the provider rewrites now run anyway:
   `translate.ts` applies the Cloudflare rule to every statement, catalog
-  permitting.
+  permitting (an unresolved provider then warns only when the detected dialect
+  is `cloudflare`).
+- A tool-handle property access (`tools.read.length`) is preserved only when
+  the live catalog confirms the first segment, and detection is catalog-free —
+  so the contract still reports `dialect: "opencode"` for such a source.
 - Non-erasable TypeScript: sucrase compiles `enum`/`namespace` into running
   JavaScript, where DeepSeek's erasable-only PTC reference would reject the
   program.

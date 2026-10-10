@@ -10,7 +10,7 @@ English | [简体中文](./README.zh-CN.md)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-398%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
 **pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
@@ -182,7 +182,13 @@ suffixed with `_`), which differs from Pi's `toCodemodeIdentifier`. The catalog
 is therefore also keyed by the Cloudflare spelling, so `codemode.delete_()` maps
 back to `tools.delete()` and `codemode._3d_render()` to `tools._d_render()`.
 Provider namespaces are only rewritten when the catalog confirms them, and names
-bound by the script itself (`const state = {…}`) are never touched. Positional
+bound by the script itself (`const state = {…}`) are never touched. An
+unresolved provider is also left unchanged — but it only warns when the
+detected dialect is `cloudflare` (`` could not resolve Cloudflare provider
+`state.readFile` … ``); any other dialect stays silent unless the trailing
+segment is a live Pi tool, in which case it hints `` `foo.read` is not a Pi
+tool path; Pi has a tool `read` — call `tools.read(...)` `` (`translate.ts`),
+so `performance.now()` and `foo.bar()` warn about nothing. Positional
 provider arguments (`state.readFile("/path")`) are preserved as written. Two
 known limitations: a statement-form program that uses only named providers (no
 `codemode.*` call, no async-arrow wrapper) detects as `unknown` (detection is
@@ -254,9 +260,12 @@ Pi's `tools.<identifier>` against the live catalog. `ToolCallError` (PTC's
 rejection for failed tool calls, carrying `.toolName`) and `await import(...)`
 (the way PTC reaches Node APIs) have no Pi equivalent — a failed Pi tool call
 rejects with a plain `Error`, and Pi's QuickJS sandbox has no `import`,
-`fetch`, or Node APIs — so both emit a warning. Those two are the only PTC
-warnings: `fetch`, `process`, and `require` are not detected (they are
-unavailable in the sandbox and fail at runtime instead). `console.log(...)` and
+`fetch`, or Node APIs — so both emit a warning. Those two are PTC-specific;
+everything else the sandbox lacks — `setInterval`/`clearInterval`, `Intl`,
+`structuredClone`, `TextEncoder`/`TextDecoder`, `URL`/`URLSearchParams`,
+`crypto`, `fetch`, `process`, `require`, `Buffer` — warns too, through the
+shared `runtime` rows in `UNSUPPORTED_GLOBALS` (`dialect/signals.ts`), each
+leaving the call in place with a suggested Pi alternative. `console.log(...)` and
 `return` are PTC's output channels and are Pi-compatible.
 
 ### OpenAI Codex code mode (`codex-rs/code-mode-runtime`)
@@ -291,7 +300,11 @@ dialect exists so a Codex script is reported and its boundaries are surfaced.
   `codemode.*` call, no async-arrow wrapper) report `dialect: unknown` —
   detection is catalog-free — so the interop `dialect` is inaccurate, but the
   provider rewrite still runs: `translate.ts` applies the Cloudflare rule to
-  every statement, catalog permitting.
+  every statement, catalog permitting (an unresolved provider then warns only
+  when the detected dialect is `cloudflare`).
+- A tool-handle property access (`tools.read.length`) is preserved only when
+  the live catalog confirms the first segment, and detection is catalog-free —
+  so the contract still reports `dialect: "opencode"` for such a source.
 - Non-erasable TypeScript: sucrase compiles `enum`/`namespace` into running
   JavaScript, where DeepSeek's erasable-only PTC reference would reject them.
 - Identifier collisions (`web-search` / `web_search`): resolution is
@@ -403,7 +416,7 @@ small proxy, keeping the original schema, `models`, `store()` persistence, and
 
 ```bash
 pnpm install
-pnpm test        # 357 unit tests
+pnpm test        # 398 unit tests
 pnpm typecheck
 ```
 
