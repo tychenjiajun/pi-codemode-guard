@@ -263,3 +263,102 @@ describe("compileCodemodeSource: statement-based translation", () => {
     expect(result.code).toContain('const r = await tools.search({ query: "x" });');
   });
 });
+
+describe("unsupported globals versus the live tool catalog (#D)", () => {
+  it("rewrites a bare `fetch` call that collides with a catalog tool, warning-free", () => {
+    const tools = ["fetch", "read"];
+    const source = 'const r = await fetch({ q: 1 });\ntext(r);';
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.code).toBe('const r = await tools.fetch({ q: 1 });\ntext(r);');
+    expect(result.warnings).toEqual([]);
+    expect(result.passes).toContain("bare-tool-calls(1)");
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual([]);
+  });
+
+  it("rewrites `fetch.get` to `tools.fetch_get` when the catalog confirms the path, warning-free", () => {
+    const tools = ["fetch_get", "read"];
+    const source = 'const r = await fetch.get({ id: 1 });';
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.code).toBe('const r = await tools.fetch_get({ id: 1 });');
+    expect(result.warnings).toEqual([]);
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual([]);
+  });
+
+  it("gives crypto.read() exactly one warning: the runtime `crypto` one, no provider hint", () => {
+    const tools = ["read"];
+    const source = "const r = await crypto.read({ path: 'a' });\ntext(r);";
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.code).toBe(source);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("`crypto` is unavailable");
+    expect(result.warnings.join("\n")).not.toContain("not a Pi tool path");
+    expect(result.warnings.join("\n")).not.toContain("Cloudflare");
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual(result.warnings);
+  });
+
+  it("rewrites crypto.read() silently when the catalog confirms crypto_read", () => {
+    const tools = ["crypto_read"];
+    const source = "const r = await crypto.read({ path: 'a' });\ntext(r);";
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.code).toBe("const r = await tools.crypto_read({ path: 'a' });\ntext(r);");
+    expect(result.warnings).toEqual([]);
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual([]);
+  });
+
+  it("still warns exactly once for crypto.randomUUID() and for bare crypto", () => {
+    const tools = ["read"];
+    const randomId = compileCodemodeSource("const id = crypto.randomUUID();\ntext(id);", { tools });
+    expect(randomId.warnings).toHaveLength(1);
+    expect(randomId.warnings[0]).toContain("`crypto` is unavailable");
+    const bare = compileCodemodeSource("text(typeof crypto);", { tools });
+    expect(bare.warnings).toHaveLength(1);
+    expect(bare.warnings[0]).toContain("`crypto` is unavailable");
+    for (const result of [randomId, bare]) {
+      const again = compileCodemodeSource(result.code, { tools });
+      expect(again.code).toBe(result.code);
+      expect(again.warnings).toEqual(result.warnings);
+    }
+  });
+});
+
+describe("unsupported-global warnings are scope-precise (#C)", () => {
+  it("warns for the top-level reference while a function parameter stays silent", () => {
+    const tools = ["read"];
+    const source = 'function f(fetch) { return fetch(); }\nawait fetch("https://x");';
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("`fetch()` is unavailable");
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual(result.warnings);
+  });
+
+  it("stays silent for a local const of the same name", () => {
+    const tools = ["read"];
+    const source = 'const fetch = (url) => url;\ntext(await fetch("/x"));';
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.warnings).toEqual([]);
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual([]);
+  });
+
+  it("warns in a sibling function while another function's parameter stays silent", () => {
+    const tools = ["read"];
+    const source = 'function a() { return fetch("/a"); }\nfunction b(fetch) { return fetch("/b"); }';
+    const result = compileCodemodeSource(source, { tools });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("`fetch()` is unavailable");
+    const again = compileCodemodeSource(result.code, { tools });
+    expect(again.code).toBe(result.code);
+    expect(again.warnings).toEqual(result.warnings);
+  });
+});

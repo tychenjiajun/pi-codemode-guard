@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { JS_GLOBALS, PI_SANDBOX_BUILTINS, PI_SANDBOX_GLOBALS, PI_SANDBOX_HOST_GLOBALS } from "../core/pi-globals.ts";
 import { detectCodemodeDialect } from "./detect.ts";
 import {
   DISTINCTIVE_UNSUPPORTED_GLOBALS,
   UNSUPPORTED_GLOBALS,
+  UNSUPPORTED_GLOBAL_BY_NAME,
   unsupportedGlobalSignal,
 } from "./signals.ts";
 import { translateCodemode } from "./translate.ts";
@@ -76,5 +78,32 @@ describe("globals Pi's sandbox lacks (runtime rows)", () => {
       expect(twice.changed).toBe(false);
       expect(twice.warnings).toEqual(once.warnings);
     }
+  });
+});
+
+describe("environment vocabulary (core/pi-globals.ts)", () => {
+  it.each(PI_SANDBOX_HOST_GLOBALS)(
+    "classifies host global %s: present in the sandbox XOR has an UNSUPPORTED_GLOBALS row",
+    (name) => {
+      const present =
+        (PI_SANDBOX_GLOBALS as readonly string[]).includes(name) || PI_SANDBOX_BUILTINS.includes(name);
+      const hasRow = UNSUPPORTED_GLOBAL_BY_NAME.has(name);
+      // Never both (a present global cannot warn), never neither (an absent
+      // global must warn): the classification must be total and disjoint.
+      expect(present).not.toBe(hasRow);
+    },
+  );
+
+  it("classifies every runtime row as a host global", () => {
+    const runtimeNames = UNSUPPORTED_GLOBALS.filter((entry) => entry.dialect === "runtime").map(
+      (entry) => entry.name,
+    );
+    expect(runtimeNames.length).toBeGreaterThan(0);
+    for (const name of runtimeNames) expect(PI_SANDBOX_HOST_GLOBALS).toContain(name);
+  });
+
+  it("keeps unsupported globals out of the skip vocabulary (the RESERVED set)", () => {
+    const reserved = [...JS_GLOBALS, ...PI_SANDBOX_GLOBALS, ...PI_SANDBOX_BUILTINS];
+    for (const entry of UNSUPPORTED_GLOBALS) expect(reserved).not.toContain(entry.name);
   });
 });

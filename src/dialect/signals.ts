@@ -44,7 +44,8 @@ export const TANSTACK_BINDING_PREFIX = "external_";
 // Other code-mode harnesses expose globals Pi's QuickJS sandbox does not define
 // (OpenAI Codex's helpers and timers; DeepSeek PTC's `ToolCallError`), and some
 // scripts reach for general runtime APIs the sandbox lacks (the `"runtime"`
-// category: timers, Intl, Web Crypto, Node APIs — see the rows below). The guard
+// category: timers, Intl, Web Crypto, Node APIs, browser/DOM globals — see the
+// rows below). The guard
 // cannot translate them, so it leaves the call in place and reports a diagnostic
 // with a suggested replacement. This table is the single source of truth for
 // both the detection signals and the translator's warnings — add a dialect
@@ -172,6 +173,66 @@ export const UNSUPPORTED_GLOBALS: readonly UnsupportedGlobal[] = [
     name: "Buffer",
     dialect: "runtime",
     message: "`Buffer` is unavailable: Pi's QuickJS sandbox has no Node.js Buffer; use `atob`/`btoa` for base64",
+  },
+  {
+    name: "Atomics",
+    dialect: "runtime",
+    message: "`Atomics` is unavailable: Pi's QuickJS sandbox has no shared-memory atomics; coordinate with plain JavaScript",
+  },
+  {
+    name: "WebAssembly",
+    dialect: "runtime",
+    message: "`WebAssembly` is unavailable: Pi's QuickJS sandbox has no WebAssembly runtime; rewrite the logic in JavaScript",
+  },
+  {
+    name: "AbortController",
+    dialect: "runtime",
+    message: "`AbortController` is unavailable: Pi's QuickJS sandbox has no abort signals; stop work with a flag or an early `return`",
+  },
+  {
+    name: "Blob",
+    dialect: "runtime",
+    message: "`Blob` is unavailable: Pi's QuickJS sandbox has no Blob API; work with strings or `Uint8Array`",
+  },
+  {
+    name: "Headers",
+    dialect: "runtime",
+    message: "`Headers` is unavailable: Pi's QuickJS sandbox has no HTTP APIs (no network access); call a Pi tool instead",
+  },
+  {
+    name: "Request",
+    dialect: "runtime",
+    message: "`Request` is unavailable: Pi's QuickJS sandbox has no HTTP APIs (no network access); call a Pi tool instead",
+  },
+  {
+    name: "Response",
+    dialect: "runtime",
+    message: "`Response` is unavailable: Pi's QuickJS sandbox has no HTTP APIs (no network access); call a Pi tool instead",
+  },
+  {
+    name: "FormData",
+    dialect: "runtime",
+    message: "`FormData` is unavailable: Pi's QuickJS sandbox has no form/HTTP APIs; pass a plain object to a Pi tool instead",
+  },
+  {
+    name: "localStorage",
+    dialect: "runtime",
+    message: "`localStorage` is unavailable: Pi's QuickJS sandbox has no persistent storage; use `store()`/`load()`",
+  },
+  {
+    name: "window",
+    dialect: "runtime",
+    message: "`window` is unavailable: Pi's QuickJS sandbox is headless (no browser global); reference the global function directly",
+  },
+  {
+    name: "document",
+    dialect: "runtime",
+    message: "`document` is unavailable: Pi's QuickJS sandbox has no DOM; build and format text in JavaScript instead",
+  },
+  {
+    name: "navigator",
+    dialect: "runtime",
+    message: "`navigator` is unavailable: Pi's QuickJS sandbox has no browser environment (no `navigator`)",
   },
   {
     name: "ToolCallError",

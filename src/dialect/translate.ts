@@ -35,11 +35,11 @@
 import { buildCatalog, collectChain, resolveToolPath } from "../core/catalog.ts";
 import { buildCloudflareCatalog, resolveCloudflarePath } from "../core/cloudflare-names.ts";
 import { parseScript, walk, type AstNode } from "../core/parse.ts";
-import { PI_SANDBOX_BUILTINS, PI_SANDBOX_GLOBALS } from "../core/pi-globals.ts";
+import { JS_GLOBALS, PI_SANDBOX_BUILTINS, PI_SANDBOX_GLOBALS } from "../core/pi-globals.ts";
 import { applyReplacements, selectReplacements, type Replacement } from "../core/replacements.ts";
 import { collectBoundNames, isReferenceIdentifier, isShadowedAt } from "../core/scope.ts";
 import { CLOUDFLARE_PLATFORM_SHIMS, CLOUDFLARE_PLATFORM_UNSUPPORTED, CODEMODE_KEYS_SHIM, namespaceKeysShim, OPENCODE_SEARCH_SHIM } from "../core/shims.ts";
-import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBALS, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.ts";
+import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.ts";
 
 // Re-exported so the public translate subpath keeps exposing the Cloudflare
 // name helpers it always has.
@@ -78,32 +78,25 @@ interface Candidate extends Replacement {
 // Runtime globals
 // ---------------------------------------------------------------------------
 
-/** Globals that are never a tool namespace or a bare tool call. */
-const JS_GLOBALS = new Set([
-  "Array", "ArrayBuffer", "Atomics", "BigInt", "Boolean", "DataView", "Date", "Error", "EvalError",
-  "FinalizationRegistry", "Float32Array", "Float64Array", "Infinity", "Int16Array", "Int32Array",
-  "Int8Array", "Intl", "JSON", "Map", "Math", "NaN", "Number", "Object", "Promise", "Proxy",
-  "RangeError", "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
-  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array", "Uint8ClampedArray",
-  "WeakMap", "WeakRef", "WeakSet", "console", "globalThis", "undefined",
-]);
-
 /** Pi codemode sandbox helpers: addresses, not provider namespaces or tool calls. */
 const PI_HELPERS = new Set(PI_SANDBOX_GLOBALS);
 
 /**
  * Names that are neither a tool namespace (a member-chain root) nor a bare tool
- * call: JS globals, Pi's sandbox globals and present builtins, and every name
- * in the unsupported-globals table. The table names are here so a reference
- * produces exactly ONE warning — its own (`unsupported:<name>`) — and never a
- * bogus "could not resolve Cloudflare provider" one (`crypto.randomUUID()`),
- * and present builtins stay completely silent (`performance.now()` works).
+ * call: the ambient JS globals the sandbox defines (`JS_GLOBALS`), Pi's
+ * sandbox globals, and the present builtins. Absent globals are deliberately
+ * NOT here — they warn through their own `unsupported:<name>` row, and a
+ * catalog-confirmed rewrite (a bare `fetch()` -> `tools.fetch()`,
+ * `fetch.get` -> `tools.fetch_get`) must still be able to run: when the catalog
+ * says the reference really is a tool, `resolvesAsTool` suppresses the warning
+ * instead. Present builtins stay completely silent (`performance.now()`
+ * works), and because the skip set never overlaps `UNSUPPORTED_GLOBALS`, no
+ * construct can emit a provider hint on top of an unsupported-global warning.
  */
 const RESERVED_GLOBALS = new Set<string>([
   ...JS_GLOBALS,
   ...PI_HELPERS,
   ...PI_SANDBOX_BUILTINS,
-  ...UNSUPPORTED_GLOBALS.map((entry) => entry.name),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -242,7 +235,13 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     const path = [chain.root, ...chain.segments];
     const resolution = resolveCloudflarePath(path, cloudflareCatalog);
     if (resolution.matched === undefined) {
-      if (names.length > 0) {
+      // The root may itself be an absent sandbox global (`crypto.read()`): its
+      // own `unsupported:crypto` warning already fired, so no provider
+      // diagnostic may be stacked on top of it (#D rule 3) — that would be two
+      // conflicting warnings for one reference. The catalog-confirmed rewrite
+      // above (`resolution.matched`) still applies to such roots.
+      const rootIsUnsupported = UNSUPPORTED_GLOBAL_BY_NAME.has(chain.root);
+      if (names.length > 0 && !rootIsUnsupported) {
         if (dialect === "cloudflare") {
           // The snippet is Cloudflare's: an unresolved provider really is a
           // provider the catalog lacks, so keep the original diagnostic.
@@ -270,6 +269,31 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     push(node, `tools.${resolution.identifier}`, "cloudflare");
   };
 
+  /**
+   * Whether an unsupported-global reference is actually a live tool, so its
+   * warning would be wrong (#D rule 2): the callee of a call the catalog
+   * resolves (`fetch()` when a tool `fetch` exists) or the root of a member
+   * chain the full path resolves (`crypto.read` when `crypto_read` exists,
+   * `URL.read` when `URL_read` exists). Those are exactly the shapes the
+   * bare-call and Cloudflare provider rules rewrite; when nothing resolves,
+   * keep the warning.
+   */
+  const resolvesAsTool = (node: AstNode, parents: readonly AstNode[], name: string): boolean => {
+    if (names.length === 0) return false;
+    const parent = parents[parents.length - 1];
+    if (!parent) return false;
+    if (parent.type === "CallExpression" && parent.callee === node) {
+      return resolveToolPath([name], catalog).matched !== undefined;
+    }
+    if (parent.type === "MemberExpression" && parent.object === node) {
+      const chain = collectChain(parent);
+      if (chain !== undefined) {
+        return resolveToolPath([chain.root, ...chain.segments], catalog).matched !== undefined;
+      }
+    }
+    return false;
+  };
+
   walk(ast, [], (node, parents) => {
     if (node.type === "ImportExpression") {
       if (enabled("ptc")) {
@@ -284,7 +308,13 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     if (node.type === "Identifier") {
       const name = node.name as string;
       const unsupported = UNSUPPORTED_GLOBAL_BY_NAME.get(name);
-      if (unsupported && enabled(unsupported.dialect) && isReferenceIdentifier(node, parents) && !bound.has(name)) {
+      if (
+        unsupported &&
+        enabled(unsupported.dialect) &&
+        isReferenceIdentifier(node, parents) &&
+        !isShadowedAt(node, parents, name) &&
+        !resolvesAsTool(node, parents, name)
+      ) {
         warn(`unsupported:${name}`, unsupported.message);
       }
       if (
