@@ -97,3 +97,23 @@ export const CLOUDFLARE_DESCRIBE_SHIM = `(async (__cm_target) => {
   }
   return { path: __cm_path, description: __cm_path + " not found.", types: "", kind: "method" };
 })`;
+
+/**
+ * `codemode.<method>` platform methods → the shim that reproduces them in Pi.
+ * `codemode.search` / `codemode.describe` are the only two with an equivalent;
+ * every other `codemode.*` name is either an unsupported platform method or a
+ * `codemode.<tool>` call.
+ */
+export const CLOUDFLARE_PLATFORM_SHIMS: Readonly<Record<string, string>> = {
+  search: CLOUDFLARE_SEARCH_SHIM,
+  describe: CLOUDFLARE_DESCRIBE_SHIM,
+};
+
+/** `codemode.<method>` platform methods with no Pi equivalent. */
+export const CLOUDFLARE_PLATFORM_UNSUPPORTED: readonly string[] = ["run", "step"];
+
+/** Every `codemode.<method>` platform method, as opposed to a `codemode.<tool>` call. */
+export const CLOUDFLARE_PLATFORM_METHODS: ReadonlySet<string> = new Set([
+  ...Object.keys(CLOUDFLARE_PLATFORM_SHIMS),
+  ...CLOUDFLARE_PLATFORM_UNSUPPORTED,
+]);

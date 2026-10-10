@@ -32,20 +32,18 @@
 // translation is best-effort: an unparseable script is returned unchanged, and
 // the rules are idempotent (a translated script has no construct left to match).
 
-import {
-  buildCatalog,
-  collectBoundNames,
-  collectChain,
-  normalizeToolKey,
-  resolveToolPath,
-  walk,
-  type Catalog,
-  type Replacement,
-  type Resolution,
-} from "./catalog.ts";
-import { toCodemodeIdentifier } from "./identifiers.ts";
-import { childNodes, parseScript, type AstNode } from "./parse.ts";
-import { CODEMODE_KEYS_SHIM, CLOUDFLARE_DESCRIBE_SHIM, CLOUDFLARE_SEARCH_SHIM, namespaceKeysShim, OPENCODE_SEARCH_SHIM } from "./shims.ts";
+import { buildCatalog, collectChain, resolveToolPath } from "../core/catalog.ts";
+import { buildCloudflareCatalog, resolveCloudflarePath } from "../core/cloudflare-names.ts";
+import { parseScript, walk, type AstNode } from "../core/parse.ts";
+import { PI_SANDBOX_GLOBALS } from "../core/pi-globals.ts";
+import { applyReplacements, selectReplacements, type Replacement } from "../core/replacements.ts";
+import { collectBoundNames, isReferenceIdentifier, isShadowedAt } from "../core/scope.ts";
+import { CLOUDFLARE_PLATFORM_SHIMS, CLOUDFLARE_PLATFORM_UNSUPPORTED, CODEMODE_KEYS_SHIM, namespaceKeysShim, OPENCODE_SEARCH_SHIM } from "../core/shims.ts";
+import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.ts";
+
+// Re-exported so the public translate subpath keeps exposing the Cloudflare
+// name helpers it always has.
+export { cloudflareSanitize, cloudflareUnsanitize } from "../core/cloudflare-names.ts";
 
 export type TranslateGroup = "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "bare";
 
@@ -77,21 +75,10 @@ interface Candidate extends Replacement {
 }
 
 // ---------------------------------------------------------------------------
-// Cloudflare's name rules and runtime globals
+// Runtime globals
 // ---------------------------------------------------------------------------
 
-/** Cloudflare's reserved-word set, copied from `@cloudflare/codemode`'s utils. */
-const JS_RESERVED = new Set([
-  "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch", "char", "class",
-  "const", "continue", "debugger", "default", "delete", "do", "double", "else", "enum", "eval",
-  "export", "extends", "false", "final", "finally", "float", "for", "function", "goto", "if",
-  "implements", "import", "in", "instanceof", "int", "interface", "let", "long", "native", "new",
-  "null", "package", "private", "protected", "public", "return", "short", "static", "super",
-  "switch", "synchronized", "this", "throw", "throws", "transient", "true", "try", "typeof",
-  "undefined", "var", "void", "volatile", "while", "with", "yield",
-]);
-
-/** Globals that are never a Cloudflare provider namespace. */
+/** Globals that are never a tool namespace or a bare tool call. */
 const JS_GLOBALS = new Set([
   "Array", "ArrayBuffer", "Atomics", "BigInt", "Boolean", "DataView", "Date", "Error", "EvalError",
   "FinalizationRegistry", "Float32Array", "Float64Array", "Infinity", "Int16Array", "Int32Array",
@@ -102,219 +89,10 @@ const JS_GLOBALS = new Set([
 ]);
 
 /** Pi codemode sandbox helpers: addresses, not provider namespaces or tool calls. */
-const PI_HELPERS = new Set([
-  "tools", "models", "text", "image", "ALL_TOOLS", "searchTools", "describeTool", "describeNamespace",
-  "store", "load", "exit", "structuredClone", "queueMicrotask",
-]);
+const PI_HELPERS = new Set(PI_SANDBOX_GLOBALS);
 
 /** Names a bare call may never be rewritten into `tools.<name>`. */
 const RESERVED_GLOBALS = new Set([...JS_GLOBALS, ...PI_HELPERS]);
-
-/** Codex-only helpers with no Pi sandbox equivalent. */
-const CODEX_HELPERS = new Set(["audio", "generatedImage", "notify", "yield_control", "setTimeout", "clearTimeout"]);
-
-/** Cloudflare's `sanitizeToolName`: a tool name -> the identifier its sandbox uses. */
-export function cloudflareSanitize(name: string): string {
-  if (!name) return "_";
-  let sanitized = name.replace(/[-.\s]/g, "_");
-  sanitized = sanitized.replace(/[^a-zA-Z0-9_$]/g, "");
-  if (!sanitized) return "_";
-  if (/^[0-9]/.test(sanitized)) sanitized = "_" + sanitized;
-  if (JS_RESERVED.has(sanitized)) sanitized = sanitized + "_";
-  return sanitized;
-}
-
-/** Best-effort inverse of `cloudflareSanitize` for when no catalog is available. */
-export function cloudflareUnsanitize(identifier: string): string {
-  if (identifier.endsWith("_") && JS_RESERVED.has(identifier.slice(0, -1))) {
-    return identifier.slice(0, -1);
-  }
-  if (/^_[0-9]/.test(identifier)) return identifier.slice(1);
-  return identifier;
-}
-
-interface CloudflareCatalog {
-  readonly catalog: Catalog;
-  /** `cloudflareSanitize(name)` -> name. */
-  readonly sanitized: ReadonlyMap<string, string>;
-}
-
-function buildCloudflareCatalog(names: readonly string[]): CloudflareCatalog {
-  const catalog = buildCatalog(names);
-  const sanitized = new Map<string, string>();
-  for (const name of names) {
-    const key = cloudflareSanitize(name);
-    if (!sanitized.has(key)) sanitized.set(key, name);
-  }
-  return { catalog, sanitized };
-}
-
-/**
- * Resolve a Cloudflare path to a Pi identifier: exact separators, then the
- * Cloudflare-sanitized spelling, then a fuzzy `normalizeToolKey` match, then a
- * deterministic flatten.
- */
-function resolveCloudflarePath(segments: readonly string[], catalog: CloudflareCatalog): Resolution {
-  const path = segments.join(".");
-  const candidates = [path, segments.join("__"), segments.join("_"), segments.join("/"), segments.join("-")];
-  for (const candidate of candidates) {
-    const matched = catalog.catalog.identifiers.get(toCodemodeIdentifier(candidate));
-    if (matched !== undefined) return { identifier: toCodemodeIdentifier(matched), matched };
-  }
-
-  const sanitizedMatch = catalog.sanitized.get(cloudflareSanitize(path));
-  if (sanitizedMatch !== undefined) {
-    return { identifier: toCodemodeIdentifier(sanitizedMatch), matched: sanitizedMatch };
-  }
-
-  const key = normalizeToolKey(path);
-  const fuzzy = key === "" ? undefined : catalog.catalog.normalized.get(key);
-  if (fuzzy !== undefined) return { identifier: toCodemodeIdentifier(fuzzy), matched: fuzzy };
-
-  return { identifier: toCodemodeIdentifier(cloudflareUnsanitize(segments[segments.length - 1] ?? "")) };
-}
-
-// ---------------------------------------------------------------------------
-// TanStack scope analysis
-// ---------------------------------------------------------------------------
-
-/** TanStack's binding prefix for tools exposed inside the sandbox. */
-export const TANSTACK_BINDING_PREFIX = "external_";
-
-/** Keys and labels are not references, so rewriting them would corrupt the script. */
-function isReferenceIdentifier(node: AstNode, parents: readonly AstNode[]): boolean {
-  const parent = parents[parents.length - 1];
-  if (!parent) return true;
-  if (parent.type === "MemberExpression" && parent.property === node) return false;
-  if (parent.type === "Property" && parent.key === node) return false;
-  if ((parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && parent.key === node) return false;
-  if (parent.type === "LabeledStatement" && parent.label === node) return false;
-  if ((parent.type === "BreakStatement" || parent.type === "ContinueStatement") && parent.label === node) return false;
-  return true;
-}
-
-/** Whether `node` sits inside `container`'s source range. */
-function within(node: AstNode, container: AstNode | undefined | null): boolean {
-  if (!container) return false;
-  return node.start >= container.start && node.end <= container.end;
-}
-
-function isFunctionScope(node: AstNode): boolean {
-  return (
-    node.type === "FunctionDeclaration" ||
-    node.type === "FunctionExpression" ||
-    node.type === "ArrowFunctionExpression"
-  );
-}
-
-/** Whether a binding pattern (parameter, declarator id) binds `name`. */
-function patternBinds(pattern: AstNode | undefined | null, name: string): boolean {
-  if (!pattern) return false;
-  let found = false;
-  const visit = (node: AstNode | undefined | null): void => {
-    if (!node || found) return;
-    switch (node.type) {
-      case "Identifier":
-        if (node.name === name) found = true;
-        break;
-      case "ObjectPattern":
-        for (const property of (node.properties as AstNode[] | undefined) ?? []) {
-          visit(property.type === "Property" ? (property.value as AstNode) : (property.argument as AstNode));
-        }
-        break;
-      case "ArrayPattern":
-        for (const element of (node.elements as (AstNode | null)[] | undefined) ?? []) visit(element);
-        break;
-      case "AssignmentPattern":
-        visit(node.left as AstNode);
-        break;
-      case "RestElement":
-        visit(node.argument as AstNode);
-        break;
-      default:
-        break;
-    }
-  };
-  visit(pattern);
-  return found;
-}
-
-/**
- * Whether a function/Program scope declares `name` anywhere in its own body:
- * its parameters, `var`/`let`/`const` declarators, and nested function/class
- * declarations — without descending into nested functions (their bindings
- * belong to their own scopes). Declarations in sibling blocks are included,
- * which over-approximates slightly — the safe direction, since an
- * over-suppressed reference is left alone, never corrupted.
- */
-function scopeDeclares(scope: AstNode, name: string): boolean {
-  if (scope.type === "FunctionDeclaration") {
-    const id = scope.id as AstNode | undefined;
-    if (id?.type === "Identifier" && id.name === name) return true;
-  }
-  if (isFunctionScope(scope)) {
-    for (const param of (scope.params as AstNode[] | undefined) ?? []) {
-      if (patternBinds(param, name)) return true;
-    }
-  }
-  let found = false;
-  const visit = (node: AstNode): void => {
-    if (found) return;
-    if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") {
-      const id = node.id as AstNode | undefined;
-      if (id?.type === "Identifier" && id.name === name) found = true;
-      return; // nested scope — only the declaration name binds here
-    }
-    if (
-      node.type === "FunctionExpression" ||
-      node.type === "ArrowFunctionExpression" ||
-      node.type === "ClassExpression"
-    ) {
-      return;
-    }
-    if (node.type === "VariableDeclarator") {
-      if (patternBinds(node.id as AstNode, name)) found = true;
-      return;
-    }
-    for (const child of childNodes(node)) visit(child);
-  };
-  visit(isFunctionScope(scope) ? ((scope.body as AstNode) ?? scope) : scope);
-  return found;
-}
-
-/**
- * Whether `name` is shadowed at `node`'s position: declared by an enclosing
- * function/Program scope, bound by an enclosing parameter or catch parameter,
- * or being declared right there (a declaration site is never a reference).
- * Scope-aware, so a binding in one function does not suppress an unrelated
- * rewrite somewhere else in the script.
- */
-function isShadowedAt(node: AstNode, parents: readonly AstNode[], name: string): boolean {
-  for (let i = parents.length - 1; i >= 0; i--) {
-    const ancestor = parents[i]!;
-    if (ancestor.type === "VariableDeclarator") {
-      if (within(node, ancestor.id as AstNode | undefined)) return true;
-      continue;
-    }
-    if (ancestor.type === "CatchClause") {
-      if (within(node, ancestor.param as AstNode | undefined)) return true;
-      if (patternBinds(ancestor.param as AstNode, name)) return true; // node is inside the catch body
-      continue;
-    }
-    if (
-      ancestor.type === "FunctionDeclaration" ||
-      ancestor.type === "FunctionExpression" ||
-      ancestor.type === "ArrowFunctionExpression"
-    ) {
-      if (within(node, ancestor.id as AstNode | undefined)) return true;
-      if (scopeDeclares(ancestor, name)) return true;
-      continue;
-    }
-    if (ancestor.type === "ClassDeclaration" && within(node, ancestor.id as AstNode | undefined)) return true;
-    if (ancestor.type === "Program" && scopeDeclares(ancestor, name)) return true;
-  }
-  return false;
-}
 
 // ---------------------------------------------------------------------------
 // Statement translation
@@ -333,19 +111,6 @@ function isObjectKeysTarget(node: AstNode, parents: readonly AstNode[]): boolean
   if ((parent.arguments as AstNode[] | undefined)?.[0] !== node) return false;
   const chain = collectChain(parent.callee as AstNode);
   return chain?.root === "Object" && chain.segments.join(".") === "keys";
-}
-
-/** Keep the outermost non-overlapping replacements: an inner `tools.a.b` inside `tools.a.b.c` is dropped. */
-function selectReplacements(candidates: readonly Candidate[]): Candidate[] {
-  const sorted = [...candidates].sort((a, b) => a.start - b.start || b.end - a.end);
-  const chosen: Candidate[] = [];
-  let lastEnd = -1;
-  for (const candidate of sorted) {
-    if (candidate.start < lastEnd) continue;
-    chosen.push(candidate);
-    lastEnd = candidate.end;
-  }
-  return chosen;
 }
 
 /**
@@ -424,24 +189,21 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
   const cloudflareMember = (node: AstNode, chain: { root: string; segments: string[] }): void => {
     if (!enabled("cloudflare")) return;
     if (chain.root === "codemode") {
-      const method = chain.segments[0]!;
-      if (chain.segments.length === 1 && method === "search") {
-        push(node, CLOUDFLARE_SEARCH_SHIM, "cloudflare");
-        return;
-      }
-      if (chain.segments.length === 1 && method === "describe") {
-        push(node, CLOUDFLARE_DESCRIBE_SHIM, "cloudflare");
-        return;
-      }
-      if (chain.segments.length === 1 && (method === "run" || method === "step")) {
-        warn(`codemode.${method}`, `\`codemode.${method}\` has no Pi equivalent; left unchanged`);
-        return;
-      }
       if (chain.segments.length > 1) {
         warn(
           `codemode.path:${chain.segments.join(".")}`,
           `unexpected Cloudflare \`codemode.${chain.segments.join(".")}\` path; left unchanged`,
         );
+        return;
+      }
+      const method = chain.segments[0]!;
+      const shim = CLOUDFLARE_PLATFORM_SHIMS[method];
+      if (shim !== undefined) {
+        push(node, shim, "cloudflare");
+        return;
+      }
+      if (CLOUDFLARE_PLATFORM_UNSUPPORTED.includes(method)) {
+        warn(`codemode.${method}`, `\`codemode.${method}\` has no Pi equivalent; left unchanged`);
         return;
       }
       const resolution = resolveCloudflarePath([method], cloudflareCatalog);
@@ -485,25 +247,9 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
 
     if (node.type === "Identifier") {
       const name = node.name as string;
-      if (name === "ToolCallError" && enabled("ptc")) {
-        warn(
-          "ptc:ToolCallError",
-          "`ToolCallError` is PTC-only and undefined in Pi; catch the plain rejection value instead",
-        );
-      }
-      if (enabled("codex") && CODEX_HELPERS.has(name) && isReferenceIdentifier(node, parents) && !bound.has(name)) {
-        warn(
-          `codex:${name}`,
-          name === "audio"
-            ? "`audio()` is Codex-only: Pi's codemode sandbox has no audio output"
-            : name === "generatedImage"
-              ? "`generatedImage()` is Codex-only; append the image with Pi's `image(block)` instead"
-              : name === "notify"
-                ? "`notify()` is Codex-only: Pi has no out-of-band notification, use `console.log(...)`"
-                : name === "yield_control"
-                  ? "`yield_control()` is Codex-only: Pi streams output when the script ends"
-                  : `\`${name}()\` is Codex-only: Pi's QuickJS sandbox has no timers`,
-        );
+      const unsupported = UNSUPPORTED_GLOBAL_BY_NAME.get(name);
+      if (unsupported && enabled(unsupported.dialect) && isReferenceIdentifier(node, parents) && !bound.has(name)) {
+        warn(`unsupported:${name}`, unsupported.message);
       }
       if (
         enabled("tanstack") &&
@@ -641,12 +387,7 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     return { code, changed: false, rewrites: 0, warnings, groups };
   }
 
-  const ordered = [...chosen].sort((a, b) => b.start - a.start);
-  let result = code;
-  for (const replacement of ordered) {
-    result = result.slice(0, replacement.start) + replacement.text + result.slice(replacement.end);
-  }
-  return { code: result, changed: true, rewrites: chosen.length, warnings, groups };
+  return { code: applyReplacements(code, chosen), changed: true, rewrites: chosen.length, warnings, groups };
 }
 
 // ---------------------------------------------------------------------------

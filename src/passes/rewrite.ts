@@ -12,9 +12,11 @@
 //
 //   tools.mcp__dev_radius__search({ query: "x" })
 
-import { buildCatalog, collectBoundNames, resolveToolPath } from "./catalog.ts";
-import { isIdentifierName, toCodemodeIdentifier } from "./identifiers.ts";
-import { childNodes, parseScript, type AstNode } from "./parse.ts";
+import { buildCatalog, resolveToolPath } from "../core/catalog.ts";
+import { isIdentifierName, toCodemodeIdentifier } from "../core/identifiers.ts";
+import { childNodes, parseScript, type AstNode } from "../core/parse.ts";
+import { applyReplacements, type Replacement } from "../core/replacements.ts";
+import { collectBoundNames } from "../core/scope.ts";
 
 const REWRITE_OBJECTS = new Set(["tools", "models"]);
 
@@ -22,12 +24,6 @@ export interface IdentifierRewriteResult {
   readonly code: string;
   readonly changed: boolean;
   readonly rewrites: number;
-}
-
-interface Replacement {
-  readonly start: number;
-  readonly end: number;
-  readonly text: string;
 }
 
 /**
@@ -92,10 +88,9 @@ export function rewriteToolIdentifiers(
   visit(ast);
   if (replacements.length === 0) return { code, changed: false, rewrites: 0 };
 
-  replacements.sort((a, b) => b.start - a.start);
-  let result = code;
-  for (const replacement of replacements) {
-    result = result.slice(0, replacement.start) + replacement.text + result.slice(replacement.end);
-  }
-  return { code: result, changed: true, rewrites: replacements.length };
+  return {
+    code: applyReplacements(code, replacements),
+    changed: true,
+    rewrites: replacements.length,
+  };
 }

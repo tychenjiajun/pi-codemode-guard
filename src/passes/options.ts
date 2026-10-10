@@ -27,6 +27,7 @@
 // aliases, and drops the options entirely when nothing usable remains so an
 // invalid line cannot fail the whole script.
 
+import { parseLooseOptionsObject } from "./loose-json.ts";
 /** Keys accepted for `max_output_tokens`. */
 const MAX_OUTPUT_TOKENS_ALIASES = [
   "max_output_tokens",
@@ -87,59 +88,6 @@ export interface OptionsSplitResult {
   readonly warnings: readonly string[];
   /** Which pragma was found: Pi's `@options` or Codex's `@exec`. */
   readonly directive?: "options" | "exec";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function tryJson(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-function quoteUnquotedKeys(text: string): string {
-  return text.replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, '$1"$2"$3');
-}
-
-function normalizeSingleQuotes(text: string): string {
-  return text.replace(/'((?:\\.|[^'\\])*)'/g, (_, inner: string) => `"${inner.replace(/"/g, '\\"')}"`);
-}
-
-function removeTrailingCommas(text: string): string {
-  return text.replace(/,(\s*[}\]])/g, "$1");
-}
-
-function parseKeyValuePairs(text: string): Record<string, unknown> | undefined {
-  const result: Record<string, unknown> = {};
-  const pattern = /([A-Za-z_][\w]*)\s*[:=]\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,;\n]+)/g;
-  let match: RegExpExecArray | null;
-  let found = false;
-  while ((match = pattern.exec(text)) !== null) {
-    found = true;
-    const raw = match[2]!.trim();
-    result[match[1]!] = tryJson(raw) ?? raw.replace(/^['"]|['"]$/g, "");
-  }
-  return found ? result : undefined;
-}
-
-/** Parse a tolerant, JSON-ish options body into an object. */
-export function parseLooseOptionsObject(raw: string): Record<string, unknown> | undefined {
-  const text = raw.trim();
-  if (text === "") return {};
-  const candidates = [
-    text,
-    removeTrailingCommas(quoteUnquotedKeys(text)),
-    removeTrailingCommas(quoteUnquotedKeys(normalizeSingleQuotes(text))),
-  ];
-  for (const candidate of candidates) {
-    const parsed = tryJson(candidate);
-    if (isRecord(parsed)) return parsed;
-  }
-  return parseKeyValuePairs(text);
 }
 
 function asPositiveInteger(value: unknown): number | undefined {

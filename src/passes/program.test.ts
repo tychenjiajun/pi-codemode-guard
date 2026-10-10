@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseScript } from "./parse.ts";
+import { parseScript } from "../core/parse.ts";
 import { CodemodeProgramError, looksLikeToolProgram, programToJs, toToolCall } from "./program.ts";
 
 describe("toToolCall", () => {

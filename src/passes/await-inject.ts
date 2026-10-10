@@ -19,11 +19,12 @@
 // `Promise.all`/`allSettled`/`race`/`any`, promises chained with
 // `.then`/`.catch`/`.finally`, and calls inside a non-async function.
 
-import { collectBoundNames } from "./catalog.ts";
-import { childNodes, isFunctionNode, parseScript, type AstNode } from "./parse.ts";
+import { PI_LOOKUP_HELPERS } from "../core/pi-globals.ts";
+import { childNodes, isFunctionNode, memberPropertyName, parseScript, type AstNode } from "../core/parse.ts";
+import { collectBoundNames } from "../core/scope.ts";
 
 /** Promise-returning globals. */
-export const ASYNC_GLOBALS = new Set(["searchTools", "describeTool", "describeNamespace"]);
+export const ASYNC_GLOBALS: ReadonlySet<string> = new Set<string>(PI_LOOKUP_HELPERS);
 
 /** Objects whose every method returns a promise. */
 export const ASYNC_OBJECTS = new Set(["tools"]);
@@ -84,16 +85,7 @@ function memberInfo(node: AstNode): MemberInfo | undefined {
   if (node.type === "MemberExpression") {
     const object = node.object as AstNode;
     if (object.type !== "Identifier") return undefined;
-    let property: string | undefined;
-    if (node.computed !== true && (node.property as AstNode).type === "Identifier") {
-      property = (node.property as AstNode).name as string;
-    } else if (
-      node.computed === true &&
-      (node.property as AstNode).type === "Literal" &&
-      typeof (node.property as AstNode).value === "string"
-    ) {
-      property = (node.property as AstNode).value as string;
-    }
+    const property = memberPropertyName(node);
     if (property === undefined) return undefined;
     return { object: object.name as string, property, computed: node.computed === true };
   }

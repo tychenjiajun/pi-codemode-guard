@@ -3,23 +3,23 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options/@exec pragmas, IIFE wrappers, JSON tool-call programs, missing await, bare tool calls, and the OpenCode / Cloudflare agents / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC / OpenAI Codex code mode dialects",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "exports": {
-    ".": "./index.ts",
-    "./compile": "./compile.ts",
-    "./compile.ts": "./compile.ts",
-    "./arguments": "./arguments.ts",
-    "./arguments.ts": "./arguments.ts",
-    "./contract": "./contract.ts",
-    "./contract.ts": "./contract.ts",
-    "./typescript": "./typescript.ts",
-    "./typescript.ts": "./typescript.ts",
-    "./dialect": "./dialect.ts",
-    "./dialect.ts": "./dialect.ts",
-    "./translate": "./translate.ts",
-    "./translate.ts": "./translate.ts",
-    "./shims": "./shims.ts",
-    "./shims.ts": "./shims.ts"
+    ".": "./src/index.ts",
+    "./compile": "./src/compile.ts",
+    "./compile.ts": "./src/compile.ts",
+    "./arguments": "./src/arguments.ts",
+    "./arguments.ts": "./src/arguments.ts",
+    "./contract": "./src/contract.ts",
+    "./contract.ts": "./src/contract.ts",
+    "./typescript": "./src/passes/typescript.ts",
+    "./typescript.ts": "./src/passes/typescript.ts",
+    "./dialect": "./src/dialect/detect.ts",
+    "./dialect.ts": "./src/dialect/detect.ts",
+    "./translate": "./src/dialect/translate.ts",
+    "./translate.ts": "./src/dialect/translate.ts",
+    "./shims": "./src/core/shims.ts",
+    "./shims.ts": "./src/core/shims.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -62,8 +62,9 @@
   },
   "sideEffects": false,
   "files": [
-    "*.ts",
-    "!*.test.ts",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "!src/**/test-support.ts",
     "assets/preview.svg",
     "README.md",
     "README.zh-CN.md",
@@ -72,7 +73,7 @@
   ],
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./src/index.ts"
     ],
     "image": "./assets/preview.svg"
   },

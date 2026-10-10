@@ -71,3 +71,32 @@ export function isFunctionNode(node: AstNode): boolean {
     node.type === "ArrowFunctionExpression"
   );
 }
+
+/**
+ * The `foo.bar` / `foo["bar"]` property name of a member expression, when it is
+ * a plain identifier or a string literal (a computed non-literal is invisible).
+ */
+export function memberPropertyName(node: AstNode): string | undefined {
+  if (node.computed !== true && (node.property as AstNode).type === "Identifier") {
+    return (node.property as AstNode).name as string;
+  }
+  if (
+    node.computed === true &&
+    (node.property as AstNode).type === "Literal" &&
+    typeof (node.property as AstNode).value === "string"
+  ) {
+    return (node.property as AstNode).value as string;
+  }
+  return undefined;
+}
+
+/** Depth-first AST walk carrying the ancestor chain. */
+export function walk(
+  node: AstNode,
+  parents: readonly AstNode[],
+  visit: (node: AstNode, parents: readonly AstNode[]) => void,
+): void {
+  visit(node, parents);
+  const nextParents = [...parents, node];
+  for (const child of childNodes(node)) walk(child, nextParents, visit);
+}

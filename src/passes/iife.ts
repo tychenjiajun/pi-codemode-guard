@@ -15,7 +15,7 @@
 // script (after the options line), so a deliberate IIFE inside a larger script
 // is left alone.
 
-import { parseScript, type AstNode } from "./parse.ts";
+import { parseScript, type AstNode } from "../core/parse.ts";
 
 export interface UnwrapResult {
   readonly code: string;

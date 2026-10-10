@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { compileCodemodeSource } from "./compile.ts";
-import { parseScript } from "./parse.ts";
+import { compileCodemodeSource } from "../compile.ts";
+import { parseScript } from "../core/parse.ts";
 import { translateCodemode } from "./translate.ts";
 
 describe("translateCodemode: bare tool calls", () => {

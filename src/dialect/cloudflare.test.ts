@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { compileCloudflareDialect, cloudflareSanitize } from "./translate.ts";
-import { detectCodemodeDialect } from "./dialect.ts";
 
 describe("cloudflareSanitize", () => {
   it("matches @cloudflare/codemode sanitizeToolName", () => {
@@ -11,36 +10,6 @@ describe("cloudflareSanitize", () => {
     expect(cloudflareSanitize("mcp.dev.radius.search")).toBe("mcp_dev_radius_search");
     expect(cloudflareSanitize("a+b")).toBe("ab");
     expect(cloudflareSanitize("")).toBe("_");
-  });
-});
-
-describe("detectCodemodeDialect: cloudflare", () => {
-  it("detects the codemode platform namespace", () => {
-    const detection = detectCodemodeDialect('const w = await codemode.getWeather({ city: "London" });');
-    expect(detection.dialect).toBe("cloudflare");
-    expect(detection.signals).toContain("codemode.<tool>");
-  });
-
-  it("detects codemode.search/describe/run/step", () => {
-    expect(detectCodemodeDialect('await codemode.search("pull request");').signals).toContain("codemode.search");
-    expect(detectCodemodeDialect('await codemode.describe("github.list");').signals).toContain("codemode.describe");
-    expect(detectCodemodeDialect('await codemode.run("saved");').signals).toContain("codemode.run");
-    expect(detectCodemodeDialect("await codemode.step('x', () => 1);").signals).toContain("codemode.step");
-  });
-
-  it("detects the bare async arrow wrapper", () => {
-    const detection = detectCodemodeDialect('async () => {\n  await state.writeJson("/x", 1);\n}');
-    expect(detection.dialect).toBe("cloudflare");
-    expect(detection.signals).toContain("async-arrow-wrapper");
-  });
-
-  it("prefers the Pi signals over the wrapper", () => {
-    expect(detectCodemodeDialect('async () => {\n  return await searchTools("x");\n}').dialect).toBe("pi");
-  });
-
-  it("leaves plain Pi and unknown code alone", () => {
-    expect(detectCodemodeDialect('const r = await tools.bash({ command: "ls" });').dialect).toBe("unknown");
-    expect(detectCodemodeDialect("async () => 1;").dialect).toBe("cloudflare");
   });
 });
 
@@ -81,6 +50,15 @@ describe("compileCloudflareDialect", () => {
       tools: ["mcp__dev-radius__search"],
     });
     expect(result.code).toBe('await tools.mcp__dev_radius__search({ query: "x" });');
+  });
+
+  it("resolves a dotted provider path through the catalog's mcp__ spelling", () => {
+    // Shares `resolveToolPath` with the other dialects, so the `mcp__` candidate
+    // resolves instead of flattening to `tools.github_list_issues`.
+    const result = compileCloudflareDialect('await github.list_issues({ repo: "a" });', {
+      tools: ["mcp__github__list_issues"],
+    });
+    expect(result.code).toBe('await tools.mcp__github__list_issues({ repo: "a" });');
   });
 
   it("compiles codemode.search to a searchTools shim with Cloudflare's result shape", () => {

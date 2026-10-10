@@ -1,60 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { compileCodemodeSource } from "./compile.ts";
+import { compileCodemodeSource } from "../compile.ts";
 import { compileOpencodeDialect } from "./translate.ts";
-import { detectCodemodeDialect } from "./dialect.ts";
-import { normalizeToolKey } from "./catalog.ts";
-import { OPENCODE_SEARCH_SHIM } from "./shims.ts";
-
-describe("detectCodemodeDialect", () => {
-  it("detects the OpenCode search namespace", () => {
-    const detection = detectCodemodeDialect('const r = await tools.$codemode.search({ query: "order" });');
-    expect(detection.dialect).toBe("opencode");
-    expect(detection.signals).toContain("$codemode.search");
-  });
-
-  it("detects OpenCode namespace tool paths", () => {
-    const detection = detectCodemodeDialect('const o = await tools.orders.lookup({ id: "1" });');
-    expect(detection.dialect).toBe("opencode");
-    expect(detection.signals).toContain("tools.<namespace>.<tool>");
-  });
-
-  it("detects Object.keys(tools)", () => {
-    expect(detectCodemodeDialect("const names = Object.keys(tools);").dialect).toBe("opencode");
-  });
-
-  it("detects the Pi helpers", () => {
-    expect(detectCodemodeDialect('const hits = await searchTools("x");').dialect).toBe("pi");
-    expect(detectCodemodeDialect("return ALL_TOOLS.map((t) => t.name);").dialect).toBe("pi");
-    expect(detectCodemodeDialect('// @options: {"timeout_ms": 1000}\nreturn 1;').dialect).toBe("pi");
-  });
-
-  it("does not mistake a plain tool call or result access for OpenCode", () => {
-    expect(detectCodemodeDialect('const r = await tools.bash({ command: "ls" });').dialect).toBe("unknown");
-    expect(detectCodemodeDialect('const r = tools.bash({ command: "ls" }).output;').dialect).toBe("unknown");
-  });
-
-  it("does not route a locally bound tools object to the OpenCode dialect", () => {
-    const code =
-      "const tools = { orders: { lookup: (id) => ({ id }) } };\nconst r = tools.orders.lookup(1);";
-    const detection = detectCodemodeDialect(code);
-    expect(detection.dialect).not.toBe("opencode");
-    expect(detection.signals).not.toContain("tools.<namespace>.<tool>");
-  });
-
-  it("does not route Object.keys(tools) to OpenCode when tools is locally bound", () => {
-    const detection = detectCodemodeDialect("const tools = {};\nconst names = Object.keys(tools);");
-    expect(detection.dialect).not.toBe("opencode");
-    expect(detection.signals).not.toContain("Object.keys(tools)");
-  });
-
-  it("names a non-search $codemode member signal generically", () => {
-    const detection = detectCodemodeDialect("await tools.$codemode.describe({});");
-    expect(detection.dialect).toBe("opencode");
-    expect(detection.signals).toContain("$codemode.<member>");
-    expect(detection.signals).not.toContain("$codemode.search");
-  });
-});
+import { normalizeToolKey } from "../core/catalog.ts";
+import { OPENCODE_SEARCH_SHIM } from "../core/shims.ts";
+import { LOCAL_TOOLS_SCRIPT } from "../test-support.ts";
 
 describe("normalizeToolKey", () => {
   it("collapses separators for fuzzy matching", () => {
@@ -120,8 +70,7 @@ describe("compileOpencodeDialect", () => {
   });
 
   it("leaves a locally bound tools object alone", () => {
-    const code =
-      "const tools = { orders: { lookup: (id) => ({ id }) } };\nconst r = tools.orders.lookup(1);";
+    const code = LOCAL_TOOLS_SCRIPT;
     const result = compileOpencodeDialect(code, { tools: ["orders.lookup"] });
     expect(result.changed).toBe(false);
     expect(result.code).toBe(code);
@@ -129,8 +78,7 @@ describe("compileOpencodeDialect", () => {
   });
 
   it("does not reroute a shadowed tools path in the full pipeline", () => {
-    const code =
-      "const tools = { orders: { lookup: (id) => ({ id }) } };\nconst r = tools.orders.lookup(1);";
+    const code = LOCAL_TOOLS_SCRIPT;
     const result = compileCodemodeSource(code, { tools: ["orders.lookup"] });
     expect(result.code).not.toContain("orders_lookup");
     expect(result.code).toContain("tools.orders.lookup(1)");

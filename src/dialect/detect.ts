@@ -27,12 +27,23 @@
 // signal is also checked lexically (a bare `external_<tool>` reference, never a
 // `tools.external_<tool>` member access).
 
-import { collectBoundNames, collectChain, walk } from "./catalog.ts";
-import { parseScript, type AstNode } from "./parse.ts";
+import { collectChain } from "../core/catalog.ts";
+import { parseScript, walk, type AstNode } from "../core/parse.ts";
+import { collectBoundNames, isDeclarationPosition } from "../core/scope.ts";
+import { PI_LOOKUP_HELPERS } from "../core/pi-globals.ts";
+import { stripComments } from "../core/lexical.ts";
+import { CLOUDFLARE_PLATFORM_METHODS } from "../core/shims.ts";
+import {
+  DISTINCTIVE_UNSUPPORTED_BY_NAME,
+  DISTINCTIVE_UNSUPPORTED_GLOBALS,
+  TANSTACK_BINDING_PREFIX,
+  unsupportedGlobalSignal,
+  type CodemodeDialect,
+} from "./signals.ts";
 
-export type CodemodeDialect = "pi" | "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "unknown";
+// Re-exported so `./dialect` (the public subpath) keeps exposing the type.
+export type { CodemodeDialect } from "./signals.ts";
 
-const TANSTACK_PREFIX = "external_";
 /** A bare `external_<tool>` reference (not `tools.external_<tool>`), for unparseable TypeScript. */
 const TANSTACK_LEXICAL = /(^|[^.\w$])external_[A-Za-z0-9_$]+/;
 /**
@@ -46,11 +57,17 @@ const OPENCODE_NESTED_LEXICAL = /\btools\.[A-Za-z_$][\w$]*\.[A-Za-z_$]/;
 /** A Cloudflare `codemode.<tool>` / `codemode.search` platform call, for unparseable TypeScript. */
 const CLOUDFLARE_LEXICAL = /\bcodemode\s*\./;
 /** DeepSeek Harness PTC signals, for unparseable TypeScript. */
-const PTC_TOOL_CALL_ERROR_LEXICAL = /\bToolCallError\b/;
 const PTC_IMPORT_LEXICAL = /\bimport\s*\(/;
 const PTC_OBJECT_KEYS_LEXICAL = /\bObject\.keys\s*\(\s*tools\s*\)/;
-/** Codex-only helper names (also survive as raw text in unparseable TypeScript). */
-const CODEX_HELPER_LEXICAL = /\b(?:yield_control|generatedImage|notify|audio)\b/;
+/**
+ * Distinctive unsupported globals (Codex helpers and PTC's `ToolCallError`),
+ * for unparseable TypeScript. The name list comes from `signals.ts`.
+ */
+const DISTINCTIVE_UNSUPPORTED_LEXICAL = DISTINCTIVE_UNSUPPORTED_GLOBALS.map((entry) => ({
+  entry,
+  pattern: new RegExp(`\\b${entry.name}\\b`),
+}));
+
 /**
  * Cheap lexical check for a locally bound `tools`, used only when the script
  * does not parse (no AST to run `collectBoundNames` on). Best-effort: it looks
@@ -60,60 +77,6 @@ const CODEX_HELPER_LEXICAL = /\b(?:yield_control|generatedImage|notify|audio)\b/
  */
 const LEXICAL_TOOLS_BINDING =
   /\b(?:const|let|var|function)\s+tools\b|\bfunction\s*[\w$]*\s*\(\s*tools\b|\(\s*tools\b[^)]*\)\s*=>/;
-
-/**
- * Blank out `//` and `/* … *​/` comments (newlines preserved, string literals
- * left alone) so a comment-only mention of a dialect keyword is not a signal.
- */
-function stripComments(text: string): string {
-  let out = "";
-  let i = 0;
-  let quote = "";
-  while (i < text.length) {
-    const ch = text[i]!;
-    const next = text[i + 1];
-    if (quote !== "") {
-      out += ch;
-      if (ch === "\\") {
-        out += next ?? "";
-        i += 2;
-        continue;
-      }
-      if (ch === quote) quote = "";
-      i += 1;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      out += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n") {
-        out += " ";
-        i += 1;
-      }
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      out += "  ";
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
-        out += text[i] === "\n" ? "\n" : " ";
-        i += 1;
-      }
-      if (i < text.length) {
-        out += "  ";
-        i += 2;
-      }
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
-}
 
 export interface DialectDetection {
   readonly dialect: CodemodeDialect;
@@ -132,8 +95,6 @@ export interface DialectDetectionContext {
   readonly hadExecLine?: boolean;
 }
 
-const CODEMODE_PLATFORM_METHODS = new Set(["search", "describe", "run", "step"]);
-
 /** Whether the whole script is a bare async arrow/function (Cloudflare's shape). */
 function isAsyncArrowWrapper(ast: AstNode): boolean {
   const statements = (ast.body as AstNode[]).filter((statement) => statement.type !== "EmptyStatement");
@@ -145,40 +106,6 @@ function isAsyncArrowWrapper(ast: AstNode): boolean {
     (expression.type === "ArrowFunctionExpression" || expression.type === "FunctionExpression") &&
     expression.async === true
   );
-}
-
-/** Whether `node` sits inside `container`'s source range. */
-function within(node: AstNode, container: AstNode | undefined | null): boolean {
-  if (!container) return false;
-  return node.start >= container.start && node.end <= container.end;
-}
-
-/**
- * Whether the identifier is written in a declaration position — a variable or
- * function/class name, a function or catch parameter, or a property key — so
- * it is not a TanStack binding reference.
- */
-function isDeclarationPosition(node: AstNode, parents: readonly AstNode[]): boolean {
-  const parent = parents[parents.length - 1];
-  if (!parent) return false;
-  if (parent.type === "Property" || parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") {
-    if (parent.key === node) return true;
-  }
-  for (let i = parents.length - 1; i >= 0; i--) {
-    const ancestor = parents[i]!;
-    if (ancestor.type === "VariableDeclarator" && within(node, ancestor.id as AstNode | undefined)) return true;
-    if (ancestor.type === "FunctionDeclaration" && within(node, ancestor.id as AstNode | undefined)) return true;
-    if (ancestor.type === "ClassDeclaration" && within(node, ancestor.id as AstNode | undefined)) return true;
-    if (ancestor.type === "CatchClause" && within(node, ancestor.param as AstNode | undefined)) return true;
-    if (
-      ancestor.type === "FunctionDeclaration" ||
-      ancestor.type === "FunctionExpression" ||
-      ancestor.type === "ArrowFunctionExpression"
-    ) {
-      if ((ancestor.params as AstNode[]).some((param) => within(node, param))) return true;
-    }
-  }
-  return false;
 }
 
 /** Lexical + AST signals that identify the dialect of a script. */
@@ -215,7 +142,7 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
         if (chain?.root === "codemode") {
           if (chain.segments.length >= 1) {
             const method = chain.segments[0]!;
-            signals.add(CODEMODE_PLATFORM_METHODS.has(method) ? `codemode.${method}` : "codemode.<tool>");
+            signals.add(CLOUDFLARE_PLATFORM_METHODS.has(method) ? `codemode.${method}` : "codemode.<tool>");
           }
         }
         if (chain?.root === "models" && chain.segments.length >= 1) signals.add("pi:models");
@@ -230,17 +157,17 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
 
       if (node.type === "Identifier") {
         const name = node.name as string;
-        if (name === "ToolCallError") signals.add("ptc:ToolCallError");
-        if (name === "yield_control" || name === "generatedImage" || name === "notify" || name === "audio") {
+        const unsupported = DISTINCTIVE_UNSUPPORTED_BY_NAME.get(name);
+        if (unsupported) {
           const parent = parents[parents.length - 1];
           const isMemberProperty = parent?.type === "MemberExpression" && parent.property === node;
-          if (!isMemberProperty && !isDeclarationPosition(node, parents)) signals.add(`codex:${name}`);
+          if (!isMemberProperty && !isDeclarationPosition(node, parents)) signals.add(unsupportedGlobalSignal(unsupported));
         }
         if (name === "ALL_TOOLS") signals.add("pi:ALL_TOOLS");
-        if (name === "searchTools" || name === "describeTool" || name === "describeNamespace") {
+        if ((PI_LOOKUP_HELPERS as readonly string[]).includes(name)) {
           signals.add(`pi:${name}`);
         }
-        if (name.startsWith(TANSTACK_PREFIX) && name.length > TANSTACK_PREFIX.length) {
+        if (name.startsWith(TANSTACK_BINDING_PREFIX) && name.length > TANSTACK_BINDING_PREFIX.length) {
           const parent = parents[parents.length - 1];
           const isMemberProperty = parent?.type === "MemberExpression" && parent.property === node;
           if (!isMemberProperty && !isDeclarationPosition(node, parents)) signals.add("external_<tool>");
@@ -283,9 +210,10 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
       // fallback: its `ToolCallError` global, `await import(...)`, and
       // `Object.keys(tools)` discovery all survive as raw text in TypeScript.
       let ptc = false;
-      if (PTC_TOOL_CALL_ERROR_LEXICAL.test(lexical)) {
-        signals.add("ptc:ToolCallError");
-        ptc = true;
+      for (const { entry, pattern } of DISTINCTIVE_UNSUPPORTED_LEXICAL) {
+        if (!pattern.test(lexical)) continue;
+        signals.add(unsupportedGlobalSignal(entry));
+        if (entry.dialect === "ptc") ptc = true;
       }
       if (PTC_IMPORT_LEXICAL.test(lexical)) {
         signals.add("ptc:import()");
@@ -299,9 +227,6 @@ export function detectCodemodeDialect(code: string, context: DialectDetectionCon
         // TypeScript plus a `tools` reference and no other dialect's signal is the
         // Vercel AI SDK code mode shape (`js` field, `tools.<name>` calls).
         signals.add("vercel:tools.<name>");
-      }
-      if (CODEX_HELPER_LEXICAL.test(lexical)) {
-        signals.add("codex:helper");
       }
     }
   }

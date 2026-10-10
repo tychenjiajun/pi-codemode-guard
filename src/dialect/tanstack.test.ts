@@ -1,34 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { compileCodemodeSource } from "./compile.ts";
-import { detectCodemodeDialect } from "./dialect.ts";
-import { parseScript } from "./parse.ts";
+import { compileCodemodeSource } from "../compile.ts";
+import { parseScript } from "../core/parse.ts";
 import { compileTanstackDialect } from "./translate.ts";
-
-describe("detectCodemodeDialect: tanstack", () => {
-  it("detects bare external_<tool> calls", () => {
-    const detection = detectCodemodeDialect('const w = await external_getWeather({ location: "London" });');
-    expect(detection.dialect).toBe("tanstack");
-    expect(detection.signals).toContain("external_<tool>");
-  });
-
-  it("detects TypeScript source that acorn cannot parse", () => {
-    const detection = detectCodemodeDialect(
-      'const city: string = "London";\nconst w = await external_getWeather({ location: city });',
-    );
-    expect(detection.dialect).toBe("tanstack");
-    expect(detection.signals).toContain("external_<tool>");
-  });
-
-  it("does not mistake a Pi tool named external_* for the dialect", () => {
-    expect(detectCodemodeDialect('const r = await tools.external_foo({ a: 1 });').dialect).toBe("unknown");
-  });
-
-  it("prefers OpenCode over TanStack", () => {
-    const code = 'await tools.$codemode.search({ query: "x" });\nawait external_foo({});';
-    expect(detectCodemodeDialect(code).dialect).toBe("opencode");
-  });
-});
 
 describe("compileTanstackDialect", () => {
   it("maps an external binding to a Pi tool", () => {

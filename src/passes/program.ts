@@ -16,8 +16,9 @@
 // model meant: a sequential `await tools.<id>({ ... })` for every step, with
 // the collected results returned as the script output.
 
-import { normalizeToolKey } from "./catalog.ts";
-import { toCodemodeIdentifier } from "./identifiers.ts";
+import { isRecord } from "../core/guards.ts";
+import { normalizeToolKey } from "../core/catalog.ts";
+import { toCodemodeIdentifier } from "../core/identifiers.ts";
 
 /** Thrown when a value passed to the program compiler is not a tool call. */
 export class CodemodeProgramError extends Error {
@@ -36,10 +37,6 @@ const ARG_KEYS = ["args", "arguments", "input", "params", "parameters", "payload
 export interface CompiledToolCall {
   readonly tool: string;
   readonly args: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

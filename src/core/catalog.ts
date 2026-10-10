@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Tool catalog + AST traversal shared by the dialect compilers
+// Tool catalog + tool-path resolution
 // ---------------------------------------------------------------------------
 //
 // A dialect rewrite needs to turn a written path (OpenCode's
@@ -7,22 +7,13 @@
 // flat `tools.<identifier>`. That needs Pi's live catalog, so the callers pass
 // the tool names from `pi.getAllTools()` as plain data and this module keeps the
 // matching pure and deterministic.
-//
-// The same `walk` / `collectChain` helpers drive both detection and rewriting so
-// the two never disagree about what a member chain is.
 
 import { toCodemodeIdentifier } from "./identifiers.ts";
-import { childNodes, type AstNode } from "./parse.ts";
+import { memberPropertyName, type AstNode } from "./parse.ts";
 
 export interface Chain {
   readonly root: string;
   readonly segments: string[];
-}
-
-export interface Replacement {
-  readonly start: number;
-  readonly end: number;
-  readonly text: string;
 }
 
 export interface Resolution {
@@ -41,79 +32,15 @@ export interface Catalog {
   readonly exact: ReadonlyMap<string, string>;
 }
 
-/** The `foo.bar` / `foo["bar"]` segment of a member expression, if visible. */
-function memberSegment(node: AstNode): string | undefined {
-  if (node.computed !== true && (node.property as AstNode).type === "Identifier") {
-    return (node.property as AstNode).name as string;
-  }
-  if (
-    node.computed === true &&
-    (node.property as AstNode).type === "Literal" &&
-    typeof (node.property as AstNode).value === "string"
-  ) {
-    return (node.property as AstNode).value as string;
-  }
-  return undefined;
-}
-
 /** Flatten a member expression into `{ root, segments }`, or `undefined`. */
 export function collectChain(node: AstNode): Chain | undefined {
   if (node.type === "Identifier") return { root: node.name as string, segments: [] };
   if (node.type !== "MemberExpression") return undefined;
   const parent = collectChain(node.object as AstNode);
   if (!parent) return undefined;
-  const segment = memberSegment(node);
+  const segment = memberPropertyName(node);
   if (segment === undefined) return undefined;
   return { root: parent.root, segments: [...parent.segments, segment] };
-}
-
-/** Depth-first AST walk carrying the ancestor chain. */
-export function walk(
-  node: AstNode,
-  parents: readonly AstNode[],
-  visit: (node: AstNode, parents: readonly AstNode[]) => void,
-): void {
-  visit(node, parents);
-  const nextParents = [...parents, node];
-  for (const child of childNodes(node)) walk(child, nextParents, visit);
-}
-
-/** Names bound by the script itself, so a local object is not mistaken for a tool. */
-export function collectBoundNames(ast: AstNode): Set<string> {
-  const bound = new Set<string>();
-  const addPattern = (pattern: AstNode | undefined | null): void => {
-    if (!pattern) return;
-    walk(pattern, [], (node) => {
-      if (node.type === "Identifier") bound.add(node.name as string);
-    });
-  };
-
-  walk(ast, [], (node) => {
-    switch (node.type) {
-      case "VariableDeclarator":
-        addPattern(node.id as AstNode | undefined);
-        break;
-      case "FunctionDeclaration":
-      case "FunctionExpression":
-      case "ArrowFunctionExpression":
-        for (const param of (node.params as AstNode[] | undefined) ?? []) addPattern(param);
-        if (node.type === "FunctionDeclaration") addPattern(node.id as AstNode | undefined);
-        break;
-      case "ClassDeclaration":
-        addPattern(node.id as AstNode | undefined);
-        break;
-      case "ImportSpecifier":
-      case "ImportDefaultSpecifier":
-      case "ImportNamespaceSpecifier":
-        addPattern(node.local as AstNode | undefined);
-        break;
-      case "CatchClause":
-        addPattern(node.param as AstNode | undefined);
-        break;
-    }
-  });
-
-  return bound;
 }
 
 /** Lowercase + collapse everything that is not `[a-z0-9]` into `_`, for fuzzy name matching. */
@@ -142,14 +69,28 @@ export function buildCatalog(names: readonly string[]): Catalog {
   return { identifiers, normalized, exact };
 }
 
+export interface ToolPathResolveOptions {
+  /**
+   * Alternate identifier lookup tried after the separator candidates and before
+   * the fuzzy match — Cloudflare's `sanitizeToolName` spelling, for instance.
+   */
+  readonly alternateIdentifier?: (path: string) => string | undefined;
+  /** Identifier to fall back to when nothing in the catalog matches. */
+  readonly fallbackIdentifier?: (segments: readonly string[]) => string;
+}
+
 /**
  * Resolve a namespace path to a Pi codemode identifier. Exact raw-name and
  * separator-convention candidates first (including MCP's canonical `mcp__`
- * server.local spelling), then a fuzzy `normalizeToolKey` match with and
- * without the `mcp_` prefix, then a deterministic flatten so the path at least
- * parses.
+ * server.local spelling), then an optional dialect-specific spelling, then a
+ * fuzzy `normalizeToolKey` match with and without the `mcp_` prefix, then a
+ * deterministic flatten so the path at least parses.
  */
-export function resolveToolPath(segments: readonly string[], catalog: Catalog): Resolution {
+export function resolveToolPath(
+  segments: readonly string[],
+  catalog: Catalog,
+  options: ToolPathResolveOptions = {},
+): Resolution {
   const joins = [
     segments.join("."),
     segments.join("__"),
@@ -171,11 +112,15 @@ export function resolveToolPath(segments: readonly string[], catalog: Catalog): 
     if (matched !== undefined) return { identifier, matched };
   }
 
+  const alternate = options.alternateIdentifier?.(segments.join("."));
+  if (alternate !== undefined) return { identifier: toCodemodeIdentifier(alternate), matched: alternate };
+
   const key = normalizeToolKey(segments.join("."));
   if (key !== "") {
     const fuzzy = catalog.normalized.get(key) ?? catalog.normalized.get(`mcp_${key}`);
     if (fuzzy !== undefined) return { identifier: toCodemodeIdentifier(fuzzy), matched: fuzzy };
   }
 
-  return { identifier: toCodemodeIdentifier(segments.join("__")) };
+  const fallback = options.fallbackIdentifier?.(segments);
+  return { identifier: fallback ?? toCodemodeIdentifier(segments.join("__")) };
 }

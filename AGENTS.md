@@ -8,35 +8,64 @@
 |------|---------|
 | Run all tests | `pnpm test` |
 | Type check | `pnpm typecheck` |
-| Run a single test file | `pnpm vitest run compile.test.ts` |
+| Run a single test file | `pnpm vitest run src/dialect/detect.test.ts` |
 
 ## Key Conventions
-- This is a **pi extension** — entry point is `index.ts`
-- Test files: `*.test.ts` alongside source files
-- Keep the compiler **pure**: every pass in `compile.ts` takes a string and returns a string; no I/O, no pi state. Passes that need the tool catalog get it as a name list (`translateCodemode(code, { tools, dialect })`, `rewriteToolIdentifiers(code, tools?)`, `compileCodemodeSource(input, { tools })`), so they stay data-only
+- This is a **pi extension** — entry point is `src/index.ts` (declared in `package.json` under `pi.extensions`)
+- Source lives under `src/`, grouped into `core/` (pure AST/catalog infrastructure), `passes/` (the string → string compile passes) and `dialect/` (detection + translation). Tests are `*.test.ts` alongside the module they cover; shared fixtures live in `src/test-support.ts`
+- Keep the compiler **pure**: every pass in `src/passes/` takes a string and returns a string; no I/O, no pi state. Passes that need the tool catalog get it as a name list (`translateCodemode(code, { tools, dialect })`, `rewriteToolIdentifiers(code, tools?)`, `compileCodemodeSource(input, { tools })`), so they stay data-only
 - A compile pass must be **best-effort and idempotent**: `compile(compile(x)) === compile(x)`, and an unparseable script is returned unchanged (with a warning) instead of throwing
-- Translation is **statement-based**, not whole-snippet: `translateCodemode` parses once and repairs each construct by its shape, so a snippet that mixes dialects is fully translated. Do not reintroduce a single-dialect `if/else` in `compile.ts`; add a rule to `translate.ts` instead
+- Translation is **statement-based**, not whole-snippet: `translateCodemode` parses once and repairs each construct by its shape, so a snippet that mixes dialects is fully translated. Do not reintroduce a single-dialect `if/else` in `compile.ts`; add a rule to `dialect/translate.ts` instead
 - Use `vi`/fixtures for time-dependent or UI tests; mock `pi` and `ctx.ui` as `index.test.ts` does
 
 ## Architecture
+
+```
+src/
+  index.ts            pi extension entry (tool proxy + tool_call/tool_result hooks)
+  arguments.ts        prepareArguments normalization
+  compile.ts          the pipeline
+  contract.ts         details.piCodemodeGuard interop contract
+  ui.ts               compile receipt + transient footer status
+  test-support.ts     shared test fixtures
+  core/               pure infrastructure shared by every pass
+  passes/             the string -> string compile passes
+  dialect/            dialect detection + statement translation
+```
+
+Root files:
 - `index.ts` — Extension entry. Runs `createCodemodeExtension()` through a `pi` proxy that adds `prepareArguments` to the codemode tool; compiles validated `code` in the `tool_call` handler; stamps `details.piCodemodeGuard` in `tool_result`
 - `arguments.ts` — Pre-validation argument normalization (`prepareArguments` shim): raw string, alias fields, nested source, JSON programs
 - `compile.ts` — The compiler pipeline (fences → options → JSON program → dialect TypeScript → generic strip-typescript → IIFE → statement translation → await → identifiers) and the public `CompileOptions`/`CompileResult`
-- `translate.ts` — The statement-based translator: one AST walk that applies every dialect's rewrite rules by construct shape (OpenCode namespace paths/`$codemode`, Cloudflare `codemode.*`/providers, TanStack `external_<tool>`, Vercel/PTC `tools["raw"]`, Codex-only helpers, bare tool calls), plus `cloudflareSanitize`/`cloudflareUnsanitize` and the TanStack scope analysis. It also exports the single-dialect entry points (`compileOpencodeDialect`, `compileCloudflareDialect`, `compileTanstackDialect`, `compileVercelDialect`, `compilePtcDialect`, `compileCodexDialect`) — thin `only`-scoped wrappers kept for the isolated dialect tests. There are no per-dialect compiler modules; the rules live only here
-- `shims.ts` — The inline runtime shims the translator splices in (`OPENCODE_SEARCH_SHIM`, `CLOUDFLARE_SEARCH_SHIM`/`DESCRIBE_SHIM`, `CODEMODE_KEYS_SHIM`, `namespaceKeysShim`)
-- `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
-- `fences.ts` — Markdown fence stripping
-- `options.ts` — `// @options:` / Codex `// @exec:` line normalization and field-alias mapping
-- `iife.ts` — Redundant async-IIFE unwrapping
-- `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, DeepSeek PTC's `run_code`, and any stray TypeScript)
-- `dialect.ts` — `detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` (pi/opencode/cloudflare/tanstack/vercel/ptc/codex/unknown); the context flags restore the pragma signals that pass 2's split removed — and the `CodemodeDialect` type
-- `catalog.ts` — Shared tool-catalog resolution and AST traversal used by the translator
-- `await-inject.ts` — acorn-based missing-`await` repair (the pi #10555 bug)
-- `rewrite.ts` — catalog-aware `tools["a-b"]` → `tools.a_b` identifier rewriting (`rewriteToolIdentifiers(code, tools?)`)
-- `identifiers.ts` — pi's `toCodemodeIdentifier` rule
-- `parse.ts` — Shared acorn parsing helpers
 - `contract.ts` — Versioned `details.piCodemodeGuard` interop contract
 - `ui.ts` — Compile receipt + transient footer status
+
+`core/` — pure, dialect-agnostic infrastructure (no rewriting):
+- `parse.ts` — Shared acorn parsing helpers (`parseScript`, `childNodes`, `walk`, `memberPropertyName`, `isFunctionNode`)
+- `scope.ts` — Scope/binding analysis (`collectBoundNames`, `isShadowedAt`, `isReferenceIdentifier`, `isDeclarationPosition`), shared by detection, translation and the await pass
+- `catalog.ts` — Tool catalog (`buildCatalog`) and catalog-aware path resolution (`resolveToolPath`, with dialect hooks for an alternate spelling and a fallback)
+- `cloudflare-names.ts` — Cloudflare's `sanitizeToolName` rules and `resolveCloudflarePath` (a `resolveToolPath` built with Cloudflare's spelling as the alternate identifier)
+- `replacements.ts` — Shared source-range replacement selection (`selectReplacements`) and splicing (`applyReplacements`)
+- `identifiers.ts` — pi's `toCodemodeIdentifier` rule
+- `pi-globals.ts` — The identifiers pi injects into the codemode sandbox (`PI_SANDBOX_GLOBALS`, `PI_LOOKUP_HELPERS`), shared by the await pass, the detector and the translator
+- `shims.ts` — The inline runtime shims the translator splices in (`OPENCODE_SEARCH_SHIM`, `CLOUDFLARE_SEARCH_SHIM`/`DESCRIBE_SHIM`, `CODEMODE_KEYS_SHIM`, `namespaceKeysShim`) and the Cloudflare platform-method registry (`CLOUDFLARE_PLATFORM_SHIMS`/`_UNSUPPORTED`/`_METHODS`)
+- `guards.ts` — `isRecord`
+- `lexical.ts` — `stripComments` for the unparseable-TypeScript signal fallback
+
+`passes/` — the compile passes, in pipeline order:
+- `fences.ts` — Markdown fence stripping
+- `options.ts` — `// @options:` / Codex `// @exec:` line normalization and field-alias mapping
+- `loose-json.ts` — tolerant JSON repair for the options body
+- `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
+- `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, DeepSeek PTC's `run_code`, and any stray TypeScript)
+- `iife.ts` — Redundant async-IIFE unwrapping
+- `await-inject.ts` — acorn-based missing-`await` repair (the pi #10555 bug)
+- `rewrite.ts` — catalog-aware `tools["a-b"]` → `tools.a_b` identifier rewriting (`rewriteToolIdentifiers(code, tools?)`)
+
+`dialect/` — detection and translation:
+- `signals.ts` — Shared dialect vocabulary: the `CODEMODE_DIALECTS` list and `CodemodeDialect` type, `TANSTACK_BINDING_PREFIX`, and the `UNSUPPORTED_GLOBALS` table (dialect globals pi's sandbox lacks, with each row's warning message and distinctive-detection flag). The table is the single source of truth for both the detector's signals and the translator's warnings — add a dialect global there
+- `detect.ts` — `detectCodemodeDialect(code, { hadOptionsLine, hadExecLine })` (pi/opencode/cloudflare/tanstack/vercel/ptc/codex/unknown); the context flags restore the pragma signals that pass 2's split removed
+- `translate.ts` — The statement-based translator: one AST walk that applies every dialect's rewrite rules by construct shape (OpenCode namespace paths/`$codemode`, Cloudflare `codemode.*`/providers, TanStack `external_<tool>`, Vercel/PTC `tools["raw"]`, Codex-only helpers, bare tool calls). It also exports the single-dialect entry points (`compileOpencodeDialect`, `compileCloudflareDialect`, `compileTanstackDialect`, `compileVercelDialect`, `compilePtcDialect`, `compileCodexDialect`) — thin `only`-scoped wrappers kept for the isolated dialect tests — and re-exports `cloudflareSanitize`/`cloudflareUnsanitize` from `cloudflare-names.ts`. There are no per-dialect compiler modules; the rules live only here
 
 ## Why a tool proxy instead of an override
 `prepareArguments` runs **before** pi validates tool arguments, so it is the only

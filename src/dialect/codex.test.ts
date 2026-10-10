@@ -1,27 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { compileCodexDialect } from "./translate.ts";
-import { compileCodemodeSource } from "./compile.ts";
-import { detectCodemodeDialect } from "./dialect.ts";
-import { parseScript } from "./parse.ts";
-
-describe("detectCodemodeDialect: codex", () => {
-  it("detects the @exec pragma through the caller's context flag", () => {
-    const detection = detectCodemodeDialect('const r = await tools.read({ path: "a" });', { hadExecLine: true });
-    expect(detection.dialect).toBe("codex");
-    expect(detection.signals).toContain("codex:@exec");
-  });
-
-  it("detects the Codex-only helpers", () => {
-    expect(detectCodemodeDialect("yield_control();").dialect).toBe("codex");
-    expect(detectCodemodeDialect('notify("done");').dialect).toBe("codex");
-    expect(detectCodemodeDialect("generatedImage(block);").dialect).toBe("codex");
-  });
-
-  it("does not mistake a bare tools.<name> call for Codex", () => {
-    expect(detectCodemodeDialect('const r = await tools.read({ path: "a" });').dialect).toBe("unknown");
-  });
-});
+import { compileCodemodeSource } from "../compile.ts";
+import { parseScript } from "../core/parse.ts";
 
 describe("compileCodexDialect", () => {
   it("reports Codex-only helpers and leaves the script alone", () => {

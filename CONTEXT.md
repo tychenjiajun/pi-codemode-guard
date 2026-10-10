@@ -233,10 +233,29 @@ at Pi's `image(block)`. Codex deletes `console` in its isolate, but Pi has
 `console`, so `console.log(...)` passes through.
 
 **Detection.** `codex:@exec` (from the `hadExecLine` context flag) and
-`codex:<helper>` for `yield_control`, `notify`, `generatedImage`, and `audio`.
+`codex:<name>` for the Codex-only helpers (`codex:yield_control`,
+`codex:notify`, `codex:generatedImage`, `codex:audio`).
 Checked after OpenCode/TanStack/Cloudflare/PTC/Vercel and before Pi's own helper
 signals. A Codex script with no `@exec` and no Codex-only helper is
 indistinguishable from Pi, and compiling it as Pi is correct.
+
+## Unsupported dialect globals
+
+PTC and Codex expose globals Pi's QuickJS sandbox does not define — PTC's
+`ToolCallError`, and Codex's `audio`, `generatedImage`, `notify`,
+`yield_control`, `setTimeout`, and `clearTimeout`. The guard cannot translate
+them, so it **leaves the call in place** (never deletes it: silent code loss
+would move the failure or hang a script) and reports a diagnostic that names a
+replacement where one exists (`generatedImage` → `image(block)`, `notify` →
+`console.log(...)`).
+
+The single source of truth is the `UNSUPPORTED_GLOBALS` table in
+`dialect/signals.ts`. Each row carries the identifier, its dialect, the warning
+`message`, and a `distinctive` flag. The translator warns from the row;
+`detect.ts` derives both its AST check and its raw-text signal from the same
+rows (only `distinctive` names are signals, so a common name like `setTimeout`
+warns without causing a false dialect detection). Add a dialect global there,
+not in three places.
 
 ## Pipeline (high level)
 
@@ -270,7 +289,10 @@ codemode sandbox executes the script
 tool_result event → details.piCodemodeGuard + compile receipt
 ```
 
-Statement translation (`translate.ts`) replaced the old single-dialect branch.
+Statement translation (`dialect/translate.ts`) replaced the old single-dialect
+branch. Modules live under `src/` (`core/` infrastructure, `passes/` compile
+passes, `dialect/` detection + translation); the full layout is in
+[`AGENTS.md`](./AGENTS.md).
 `compileCodemodeSource` still calls `detectCodemodeDialect` once, but only to
 pick the TypeScript pass, to disambiguate the two constructs OpenCode and PTC
 share (`Object.keys(tools)`, unresolved bracket names), and to fill the interop

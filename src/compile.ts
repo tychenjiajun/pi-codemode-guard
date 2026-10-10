@@ -36,16 +36,16 @@
 // A pass that would need a parse is skipped when the script does not parse, so
 // a guard bug can never corrupt a script beyond what lexical passes already did.
 
-import { injectAwait } from "./await-inject.ts";
-import { detectCodemodeDialect, type CodemodeDialect } from "./dialect.ts";
-import { stripCodeFences } from "./fences.ts";
-import { unwrapIIFE } from "./iife.ts";
-import { splitOptionsLine } from "./options.ts";
-import { looksLikeToolProgram, programToJs } from "./program.ts";
-import { parseScript } from "./parse.ts";
-import { rewriteToolIdentifiers } from "./rewrite.ts";
-import { translateCodemode, type TranslateGroup } from "./translate.ts";
-import { stripTypeScriptSyntax } from "./typescript.ts";
+import { injectAwait } from "./passes/await-inject.ts";
+import { detectCodemodeDialect, type CodemodeDialect } from "./dialect/detect.ts";
+import { stripCodeFences } from "./passes/fences.ts";
+import { unwrapIIFE } from "./passes/iife.ts";
+import { splitOptionsLine } from "./passes/options.ts";
+import { looksLikeToolProgram, programToJs } from "./passes/program.ts";
+import { parseScript } from "./core/parse.ts";
+import { rewriteToolIdentifiers } from "./passes/rewrite.ts";
+import { translateCodemode, type TranslateGroup } from "./dialect/translate.ts";
+import { stripTypeScriptSyntax } from "./passes/typescript.ts";
 
 export interface CompileOptions {
   /**
@@ -87,6 +87,13 @@ const GROUP_PASSES: ReadonlyArray<readonly [TranslateGroup, string]> = [
   ["codex", "codex-dialect"],
   ["bare", "bare-tool-calls"],
 ];
+
+/**
+ * Dialects whose programs are TypeScript (TanStack's `execute_typescript`,
+ * Vercel's `js`, DeepSeek PTC's `run_code`), so they need sucrase before any
+ * acorn pass can parse them.
+ */
+const TYPESCRIPT_DIALECTS: ReadonlySet<string> = new Set(["tanstack", "vercel", "ptc"]);
 
 function looksLikeJson(text: string): boolean {
   return text.startsWith("{") || text.startsWith("[");
@@ -169,7 +176,7 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
 
     // TanStack/Vercel/PTC source is TypeScript, so it must be stripped before
     // `unwrap-iife` (or any other acorn pass) can parse it.
-    if (dialect === "tanstack" || dialect === "vercel" || dialect === "ptc") {
+    if (TYPESCRIPT_DIALECTS.has(dialect)) {
       const stripped = stripTypeScriptSyntax(body);
       warnings.push(...stripped.warnings);
       if (stripped.changed) {

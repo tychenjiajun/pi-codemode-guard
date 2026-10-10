@@ -18,7 +18,8 @@
 //   [ { tool: "read", args: {...} }, ... ]        -> JSON tool-call program
 //   [ "await tools.read(...)", ... ]              -> raw JavaScript lines
 
-import { programToJs, toToolCall } from "./program.ts";
+import { isRecord } from "./core/guards.ts";
+import { programToJs, toToolCall } from "./passes/program.ts";
 
 /** Thrown when the tool arguments cannot be interpreted as a codemode script. */
 export class CodemodeArgumentError extends Error {
@@ -75,10 +76,6 @@ export const PROGRAM_FIELD_ALIASES = [
 
 /** Keys a nested source object may use for its JavaScript. */
 const NESTED_SOURCE_KEYS = ["code", "content", "source", "text", "script", "body", "js", "javascript"] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function extractNestedSource(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined;

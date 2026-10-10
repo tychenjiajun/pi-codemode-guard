@@ -359,7 +359,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 344 个单元测试
+pnpm test        # 357 个单元测试
 pnpm typecheck
 ```
 

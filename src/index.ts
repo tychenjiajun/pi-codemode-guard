@@ -27,6 +27,8 @@ import { createCodemodeExtension } from "@earendil-works/pi-coding-agent";
 
 import { normalizeCodemodeArguments } from "./arguments.ts";
 import { compileCodemodeSource, type CompileResult } from "./compile.ts";
+import { isRecord } from "./core/guards.ts";
+import { isTranslatedDialect } from "./dialect/signals.ts";
 import {
   PI_CODEMODE_GUARD_DETAILS_KEY,
   PI_CODEMODE_GUARD_CONTRACT_VERSION,
@@ -49,10 +51,6 @@ interface CompilationRecord {
  * and a late result for an evicted call simply goes unstamped.
  */
 const MAX_PENDING_RECORDS = 32;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function toDetails(record: CompilationRecord): PiCodemodeGuardDetails {
   return {
@@ -111,14 +109,7 @@ export function createGuardedCodemodeApi(pi: ExtensionAPI): ExtensionAPI {
 
 function notifyCompiled(ctx: ExtensionContext, result: CompileResult): void {
   const summary = result.passes.length > 0 ? result.passes.join(", ") : result.warnings.join("; ");
-  const translated =
-    result.dialect === "opencode" ||
-    result.dialect === "cloudflare" ||
-    result.dialect === "tanstack" ||
-    result.dialect === "vercel" ||
-    result.dialect === "ptc" ||
-    result.dialect === "codex";
-  const dialect = translated ? `${result.dialect} → pi` : result.dialect;
+  const dialect = isTranslatedDialect(result.dialect) ? `${result.dialect} → pi` : result.dialect;
   showGuardStatus(ctx, `🛡 ${dialect} · ${summary}`);
   if (ctx.hasUI) {
     ctx.ui.notify(`pi-codemode-guard: compiled codemode script (${dialect}; ${summary})`, "info");

@@ -403,7 +403,7 @@ small proxy, keeping the original schema, `models`, `store()` persistence, and
 
 ```bash
 pnpm install
-pnpm test        # 344 unit tests
+pnpm test        # 357 unit tests
 pnpm typecheck
 ```
 

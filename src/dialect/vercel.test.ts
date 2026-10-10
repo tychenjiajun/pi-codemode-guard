@@ -1,56 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detectCodemodeDialect } from "./dialect.ts";
 import { compileVercelDialect } from "./translate.ts";
-
-describe("detectCodemodeDialect: vercel", () => {
-  it("detects TypeScript with a bare tools.<name> call", () => {
-    const detection = detectCodemodeDialect(
-      'const city: string = "London";\nconst w = await tools.getWeather({ location: city });',
-    );
-    expect(detection.dialect).toBe("vercel");
-    expect(detection.signals).toContain("vercel:tools.<name>");
-  });
-
-  it("detects TypeScript with a tools[\"name\"] bracket access", () => {
-    const detection = detectCodemodeDialect(
-      'type Query = { q: string };\nconst r = await tools["web-search"]({ q: "pi" });',
-    );
-    expect(detection.dialect).toBe("vercel");
-    expect(detection.signals).toContain("vercel:tools.<name>");
-  });
-
-  it("prefers TanStack's external_ binding over the Vercel signal", () => {
-    const code = 'const city: string = "x";\nawait external_getWeather({ location: city });\nawait tools["web-search"]({});';
-    expect(detectCodemodeDialect(code).dialect).toBe("tanstack");
-  });
-
-  it("prefers an OpenCode nested path over the Vercel signal", () => {
-    const code = 'interface Order { id: string }\nconst o = await tools.orders.lookup({ id: "1" });';
-    const detection = detectCodemodeDialect(code);
-    expect(detection.dialect).toBe("opencode");
-    expect(detection.signals).toContain("tools.<namespace>.<tool>");
-  });
-
-  it("does not claim plain Pi JavaScript", () => {
-    const detection = detectCodemodeDialect('const r = await tools.read({ path: "a" });');
-    expect(detection.dialect).toBe("unknown");
-    expect(detection.signals).not.toContain("vercel:tools.<name>");
-  });
-
-  it("detects optional-chained TypeScript tool access", () => {
-    const detection = detectCodemodeDialect(
-      'interface Q { q: string }\nconst r = await tools?.["web-search"]({ q: "pi" });',
-    );
-    expect(detection.dialect).toBe("vercel");
-    expect(detection.signals).toContain("vercel:tools.<name>");
-  });
-
-  it("prefers Cloudflare over Vercel when the codemode namespace is present", () => {
-    const code = 'interface A {}\nawait codemode.search("x");\nawait tools.getWeather({});';
-    expect(detectCodemodeDialect(code).dialect).toBe("cloudflare");
-  });
-});
 
 describe("compileVercelDialect", () => {
   it("maps a bracket access to Pi's identifier", () => {

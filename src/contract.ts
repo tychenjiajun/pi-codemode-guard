@@ -15,7 +15,8 @@
 // The shape is versioned and additive-only. Consumers must ignore unknown
 // fields and fall back to the inline content when `version` is not understood.
 
-import type { CodemodeDialect } from "./dialect.ts";
+import { isRecord } from "./core/guards.ts";
+import { isCodemodeDialect, type CodemodeDialect } from "./dialect/signals.ts";
 
 export const PI_CODEMODE_GUARD_DETAILS_KEY = "piCodemodeGuard" as const;
 export const PI_CODEMODE_GUARD_CONTRACT_VERSION = 1 as const;
@@ -36,14 +37,8 @@ export interface PiCodemodeGuardDetails {
   readonly warnings: readonly string[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readDialect(value: unknown): CodemodeDialect {
-  return value === "pi" || value === "opencode" || value === "cloudflare" || value === "tanstack" || value === "vercel" || value === "ptc" || value === "codex"
-    ? value
-    : "unknown";
+  return isCodemodeDialect(value) ? value : "unknown";
 }
 
 function readStringArray(value: unknown): string[] | undefined {
