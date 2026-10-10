@@ -7,8 +7,9 @@ English | [简体中文](./README.zh-CN.md)
 </p>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
-[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
+[![npm](https://img.shields.io/npm/v/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
+[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://pi.dev/docs/latest/extensions)
+[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -328,26 +329,35 @@ dialect exists so a Codex script is reported and its boundaries are surfaced.
 
 ## Install
 
-`pi-codemode-guard` is a [Pi package](https://pi.dev/packages) (it carries the
-`pi-package` keyword, so it is eligible for the package gallery). Install it with
-the `pi` CLI and it registers the `codemode` tool itself:
+`pi-codemode-guard` is a [Pi package](https://pi.dev/docs/latest/packages): it
+ships a `pi.extensions` manifest and the `pi-package` keyword, so installing it
+with the `pi` CLI registers the `codemode` tool itself. It is published to npm as
+[`pi-codemode-guard`](https://www.npmjs.com/package/pi-codemode-guard).
 
 ```bash
-# from git (recommended; not published to npm yet)
+# from npm (recommended)
+pi install npm:pi-codemode-guard
+
+# from git
 pi install git:github.com/tychenjiajun/pi-codemode-guard
 
 # from a local checkout
-pi install /path/to/pi-codemode-guard
+pi install ./pi-codemode-guard
 
 # try it for one session without saving it to settings
-pi -e /path/to/pi-codemode-guard
+pi -e npm:pi-codemode-guard
 ```
 
-`pi list` confirms it is loaded; `pi remove <source>` uninstalls it; `pi config`
-enables or disables individual resources. Personal installs are written to
-`~/.pi/agent/settings.json` — add `--local` (or `-l`) to write a project-scoped
-declaration to `.pi/settings.json` instead (loaded only after project trust is
-granted).
+`pi list` shows configured packages; `pi remove <source>` removes one and
+`pi update --extensions` reconciles installed packages; `pi config` enables or
+disables individual resources, including pi's built-ins. Personal installs are
+written to `~/.pi/agent/settings.json` — add `--local` (or `-l`) to write a
+project-scoped declaration to `.pi/settings.json` instead, which pi reads only
+after project trust is granted.
+
+> Extensions and packages run **inside the pi process with your operating-system
+> permissions** and can inspect prompts, tool calls, and session history. Review
+> third-party source before installing it — including this one.
 
 It works both with the CLI's built-in codemode extension (which it replaces) and
 in SDK sessions that add `createCodemodeExtension()`.
@@ -371,6 +381,29 @@ reimplementing it would lose `models`, `store()` persistence, and
 `registerTool` adds the argument shim and a compile receipt. The tool keeps
 `parameters === codemodeSchema` (so `isCodemodeTool` still recognizes it) and
 all of its original options.
+
+## Built on pi
+
+The guard is an ordinary [extension](https://pi.dev/docs/latest/extensions) — a
+TypeScript module whose default export is a factory that receives `ExtensionAPI`
+and registers capabilities for the current runtime. It uses two of the documented
+integration points, and nothing else:
+
+- `pi.registerTool()` — re-registers the canonical `codemode` tool through a
+  proxy that adds `prepareArguments` and the render receipt.
+- `pi.on("tool_call")` / `pi.on("tool_result")` — compiles the validated `code`
+  in place, then stamps `details.piCodemodeGuard` on the result.
+
+It follows the [package contract](https://pi.dev/docs/latest/packages) too:
+
+| Package contract | How this package complies |
+|---|---|
+| Manifest | `"pi": { "extensions": ["./src/index.ts"], "image": "./assets/preview.svg" }` |
+| Gallery eligibility | the `pi-package` keyword is present, and `pi.image` supplies the gallery preview |
+| Host packages | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are `peerDependencies` with a `"*"` range and are never bundled |
+| Runtime dependencies | `acorn` and `sucrase` are real `dependencies`, installed with the package |
+| No build step | pi loads the TypeScript entry through jiti, so the published tarball ships the source as-is |
+| Lifecycle | the factory only registers — it starts no processes, sockets, watchers or timers, so a session-less load is safe, and compilation keeps no state beyond a bounded pending-call map |
 
 ## Interop contract
 
@@ -441,10 +474,13 @@ the replacement.
 pnpm install
 pnpm test        # 452 unit tests
 pnpm typecheck
+pi -e .          # load this checkout as an extension for one session
 ```
 
 Layout and design notes live in [`AGENTS.md`](./AGENTS.md) and
-[`CONTEXT.md`](./CONTEXT.md).
+[`CONTEXT.md`](./CONTEXT.md). Pi's own documentation:
+[Extensions](https://pi.dev/docs/latest/extensions) ·
+[Pi packages](https://pi.dev/docs/latest/packages).
 
 ## License
 

@@ -7,8 +7,9 @@
 </p>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://github.com/earendil-works/pi)
-[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/packages)
+[![npm](https://img.shields.io/npm/v/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
+[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://pi.dev/docs/latest/extensions)
+[![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -294,23 +295,31 @@ PTC 的输出通道，与 Pi 兼容。
 
 ## 安装
 
-`pi-codemode-guard` 是一个 [Pi 包](https://pi.dev/packages)（带 `pi-package` 关键字，
-因此有资格进入包展示廊）。用 `pi` CLI 安装，它会自行注册 `codemode` 工具：
+`pi-codemode-guard` 是一个 [Pi 包](https://pi.dev/docs/latest/packages)：它带有
+`pi.extensions` 清单和 `pi-package` 关键字，用 `pi` CLI 安装后会自动注册 `codemode` 工具。
+它已发布到 npm：[`pi-codemode-guard`](https://www.npmjs.com/package/pi-codemode-guard)。
 
 ```bash
-# 从 git 安装（推荐；尚未发布到 npm）
+# 从 npm 安装（推荐）
+pi install npm:pi-codemode-guard
+
+# 从 git 安装
 pi install git:github.com/tychenjiajun/pi-codemode-guard
 
 # 从本地检出安装
-pi install /path/to/pi-codemode-guard
+pi install ./pi-codemode-guard
 
 # 仅本次会话试用，不写入设置
-pi -e /path/to/pi-codemode-guard
+pi -e npm:pi-codemode-guard
 ```
 
-`pi list` 确认它已加载；`pi remove <source>` 卸载它；`pi config` 启用或禁用单个资源。
+`pi list` 列出已配置的包；`pi remove <source>` 卸载；`pi update --extensions`
+同步已安装的包；`pi config` 启用或禁用单个资源（包括 pi 的内置扩展）。
 个人级安装写入 `~/.pi/agent/settings.json` —— 加 `--local`（或 `-l`）则改为把项目级
-声明写入 `.pi/settings.json`（仅在项目信任通过后才会加载）。
+声明写入 `.pi/settings.json`，仅在项目信任通过后才会加载。
+
+> 扩展和包都**运行在 pi 进程内，并拥有你的操作系统权限**，可以读取提示词、工具调用和会话历史。
+> 安装第三方源码前请先审阅 —— 本包也一样。
 
 它既适用于 CLI 内置的 codemode 扩展（会被它替换），
 也适用于自行添加 `createCodemodeExtension()` 的 SDK 会话。
@@ -331,6 +340,28 @@ pi -e /path/to/pi-codemode-guard
 `createCodemodeExtension()` 工厂通过一个小型 `pi` 代理运行，由其 `registerTool`
 追加参数垫片和编译回执。工具仍然保持 `parameters === codemodeSchema`
 （因此 `isCodemodeTool` 仍能识别它），并保留其全部原始选项。
+
+## 基于 pi 构建
+
+本扩展就是一个普通的 [pi 扩展](https://pi.dev/docs/latest/extensions)：一个 TypeScript
+模块，默认导出的工厂函数接收 `ExtensionAPI`，并为当前运行时注册能力。它只用了文档中的两个
+集成点：
+
+- `pi.registerTool()` —— 通过代理重新注册规范的 `codemode` 工具，附加 `prepareArguments`
+  和编译回执。
+- `pi.on("tool_call")` / `pi.on("tool_result")` —— 就地把校验通过的 `code` 编译好，再把
+  `details.piCodemodeGuard` 写到结果上。
+
+它同样遵循[包契约](https://pi.dev/docs/latest/packages)：
+
+| 包契约 | 本包的遵守方式 |
+|---|---|
+| 清单 | `"pi": { "extensions": ["./src/index.ts"], "image": "./assets/preview.svg" }` |
+| 展示廊资格 | 带 `pi-package` 关键字，`pi.image` 提供展示廊预览图 |
+| 宿主包 | `@earendil-works/pi-coding-agent` 与 `@earendil-works/pi-tui` 以 `"*"` 范围声明在 `peerDependencies`，从不打包进产物 |
+| 运行时依赖 | `acorn`、`sucrase` 是真正的 `dependencies`，随包安装 |
+| 无需构建 | pi 通过 jiti 直接加载 TypeScript 入口，因此发布产物即源码 |
+| 生命周期 | 工厂只做注册 —— 不启动进程、socket、监听器或定时器，不带会话加载也安全；编译过程除一个有界的待处理调用表外不保留状态 |
 
 ## 互操作契约
 
@@ -391,9 +422,12 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 pnpm install
 pnpm test        # 452 个单元测试
 pnpm typecheck
+pi -e .          # 把本检出作为扩展加载，仅本次会话
 ```
 
 代码结构和设计说明见 [`AGENTS.md`](./AGENTS.md) 与 [`CONTEXT.md`](./CONTEXT.md)。
+pi 官方文档：[扩展](https://pi.dev/docs/latest/extensions) ·
+[Pi 包](https://pi.dev/docs/latest/packages)。
 
 ## 许可证
 
