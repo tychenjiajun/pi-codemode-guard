@@ -73,5 +73,5 @@
 
   <!-- footer -->
   <text x="600" y="546" font-size="20" fill="#6b6580" text-anchor="middle">best-effort · idempotent · pure compiler — never blocks a tool call</text>
-  <text x="600" y="582" font-size="15" fill="#a39fb8" text-anchor="middle">MIT · TypeScript strict · 344 unit tests · OpenCode · Cloudflare · TanStack · Vercel · PTC · Codex · 6 dialects</text>
+  <text x="600" y="582" font-size="15" fill="#a39fb8" text-anchor="middle">MIT · TypeScript strict · 357 unit tests · OpenCode · Cloudflare · TanStack · Vercel · PTC · Codex · 6 dialects</text>
 </svg>
