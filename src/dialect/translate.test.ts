@@ -165,6 +165,82 @@ describe("translateCodemode: Object.keys disambiguation", () => {
   });
 });
 
+describe("translateCodemode: unresolved provider paths", () => {
+  const tools = ["read", "bash"];
+
+  it("stays silent for a method call on an unbound root when nothing resolves", () => {
+    for (const dialect of ["unknown", "pi", "opencode"] as const) {
+      const result = translateCodemode("foo.bar();", { tools, dialect });
+      expect(result.warnings).toEqual([]);
+      expect(result.changed).toBe(false);
+    }
+  });
+
+  it("keeps the Cloudflare message for an unresolved root in the Cloudflare dialect", () => {
+    const result = translateCodemode("foo.bar();", { tools, dialect: "cloudflare" });
+    expect(result.warnings).toEqual([
+      "could not resolve Cloudflare provider `foo.bar` in the Pi catalog; left unchanged",
+    ]);
+  });
+
+  it("hints with the real tool when only the trailing segment resolves (unknown dialect)", () => {
+    const result = translateCodemode("foo.read({ path: \"x\" });", { tools, dialect: "unknown" });
+    expect(result.warnings).toEqual([
+      "`foo.read` is not a Pi tool path; Pi has a tool `read` — call `tools.read(...)`",
+    ]);
+    expect(result.changed).toBe(false);
+  });
+
+  it("keeps the Cloudflare message (not the hint) when the trailing segment resolves under the Cloudflare dialect", () => {
+    const result = translateCodemode("foo.read({ path: \"x\" });", { tools, dialect: "cloudflare" });
+    expect(result.warnings).toEqual([
+      "could not resolve Cloudflare provider `foo.read` in the Pi catalog; left unchanged",
+    ]);
+  });
+
+  it("rewrites a catalog-confirmed provider path for every dialect", () => {
+    for (const dialect of ["unknown", "pi", "cloudflare"] as const) {
+      const result = translateCodemode('state.readFile("/x");', {
+        tools: ["state.readFile"],
+        dialect,
+      });
+      expect(result.code).toBe("tools.state_readFile(\"/x\");");
+      expect(result.warnings).toEqual([]);
+    }
+  });
+
+  it("stays silent for state.readFile when it resolves to nothing outside the Cloudflare dialect", () => {
+    const result = translateCodemode('state.readFile("/x");', { tools, dialect: "unknown" });
+    expect(result.warnings).toEqual([]);
+    expect(result.changed).toBe(false);
+  });
+
+  it("still warns about state.readFile in the Cloudflare dialect", () => {
+    const result = translateCodemode('state.readFile("/x");', { tools, dialect: "cloudflare" });
+    expect(result.warnings).toEqual([
+      "could not resolve Cloudflare provider `state.readFile` in the Pi catalog; left unchanged",
+    ]);
+  });
+
+  it("is idempotent for every unresolved-provider case", () => {
+    const cases: Array<{ code: string; dialect: string }> = [
+      { code: "foo.bar();", dialect: "unknown" },
+      { code: "foo.bar();", dialect: "cloudflare" },
+      { code: 'foo.read({ path: "x" });', dialect: "unknown" },
+      { code: 'foo.read({ path: "x" });', dialect: "cloudflare" },
+      { code: 'state.readFile("/x");', dialect: "unknown" },
+      { code: 'state.readFile("/x");', dialect: "cloudflare" },
+    ];
+    for (const { code, dialect } of cases) {
+      const once = translateCodemode(code, { tools, dialect });
+      const twice = translateCodemode(once.code, { tools, dialect });
+      expect(twice.changed).toBe(false);
+      expect(twice.code).toBe(once.code);
+      expect(twice.warnings).toEqual(once.warnings);
+    }
+  });
+});
+
 describe("compileCodemodeSource: statement-based translation", () => {
   it("repairs every construct regardless of the snippet's dialect", () => {
     const source = [

@@ -243,10 +243,27 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     const resolution = resolveCloudflarePath(path, cloudflareCatalog);
     if (resolution.matched === undefined) {
       if (names.length > 0) {
-        warn(
-          `cloudflare-provider:${path.join(".")}`,
-          `could not resolve Cloudflare provider \`${path.join(".")}\` in the Pi catalog; left unchanged`,
-        );
+        if (dialect === "cloudflare") {
+          // The snippet is Cloudflare's: an unresolved provider really is a
+          // provider the catalog lacks, so keep the original diagnostic.
+          warn(
+            `cloudflare-provider:${path.join(".")}`,
+            `could not resolve Cloudflare provider \`${path.join(".")}\` in the Pi catalog; left unchanged`,
+          );
+        } else {
+          // Any other dialect: this is just a method call on an unbound root
+          // (`performance.now()`, `foo.bar()`), not a Cloudflare provider.
+          // Blaming Cloudflare would be a false positive, so warn only when a
+          // useful hint exists — the trailing segment alone is a live tool.
+          const trailing = chain.segments[chain.segments.length - 1]!;
+          const hint = resolveToolPath([trailing], catalog);
+          if (hint.matched !== undefined) {
+            warn(
+              `provider-not-a-tool:${path.join(".")}`,
+              `\`${chain.root}.${trailing}\` is not a Pi tool path; Pi has a tool \`${hint.matched}\` — call \`tools.${hint.identifier}(...)\``,
+            );
+          }
+        }
       }
       return;
     }
