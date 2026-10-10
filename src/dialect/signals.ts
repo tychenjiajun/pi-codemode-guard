@@ -21,8 +21,8 @@ export const CODEMODE_DIALECTS = [
 
 export type CodemodeDialect = (typeof CODEMODE_DIALECTS)[number];
 
-/** The dialects that own an unsupported global (not the full `CodemodeDialect`). */
-export type UnsupportedGlobalDialect = "codex" | "ptc";
+/** The dialects (or `runtime`) that own an unsupported global. */
+export type UnsupportedGlobalDialect = "codex" | "ptc" | "runtime";
 
 /** Whether `value` is a known dialect name (for parsing untrusted contract data). */
 export function isCodemodeDialect(value: unknown): value is CodemodeDialect {
@@ -42,7 +42,9 @@ export const TANSTACK_BINDING_PREFIX = "external_";
 // ---------------------------------------------------------------------------
 //
 // Other code-mode harnesses expose globals Pi's QuickJS sandbox does not define
-// (OpenAI Codex's helpers and timers; DeepSeek PTC's `ToolCallError`). The guard
+// (OpenAI Codex's helpers and timers; DeepSeek PTC's `ToolCallError`), and some
+// scripts reach for general runtime APIs the sandbox lacks (the `"runtime"`
+// category: timers, Intl, Web Crypto, Node APIs — see the rows below). The guard
 // cannot translate them, so it leaves the call in place and reports a diagnostic
 // with a suggested replacement. This table is the single source of truth for
 // both the detection signals and the translator's warnings — add a dialect
@@ -51,7 +53,12 @@ export const TANSTACK_BINDING_PREFIX = "external_";
 export interface UnsupportedGlobal {
   /** The identifier the other dialect defines. */
   readonly name: string;
-  /** Which dialect the global belongs to. */
+  /**
+   * Which category the global belongs to: a dialect (`codex`, `ptc`) or
+   * `"runtime"` for a general-purpose runtime global another environment
+   * provides that Pi's QuickJS sandbox does not. Not a `CodemodeDialect` —
+   * `"runtime"` never appears in the interop contract's `dialect` field.
+   */
   readonly dialect: UnsupportedGlobalDialect;
   /** The warning shown when the script references it. */
   readonly message: string;
@@ -97,6 +104,74 @@ export const UNSUPPORTED_GLOBALS: readonly UnsupportedGlobal[] = [
     name: "clearTimeout",
     dialect: "codex",
     message: "`clearTimeout()` is unavailable: Pi's QuickJS sandbox has no timers",
+  },
+  // `"runtime"` rows: globals another runtime provides that Pi's QuickJS
+  // sandbox lacks. Never `distinctive` — they must not flip detection. Each
+  // message states the sandbox truth and, where one exists, a Pi alternative.
+  {
+    name: "setInterval",
+    dialect: "runtime",
+    message: "`setInterval()` is unavailable: Pi's QuickJS sandbox has no timers; run the work inline",
+  },
+  {
+    name: "clearInterval",
+    dialect: "runtime",
+    message: "`clearInterval()` is unavailable: Pi's QuickJS sandbox has no timers",
+  },
+  {
+    name: "Intl",
+    dialect: "runtime",
+    message: "`Intl` is unavailable: Pi's QuickJS sandbox has no Intl; format manually or use `Date.prototype.toISOString()`",
+  },
+  {
+    name: "structuredClone",
+    dialect: "runtime",
+    message: "`structuredClone()` is unavailable: Pi's QuickJS sandbox has no structuredClone; use `JSON.parse(JSON.stringify(x))` for JSON-safe data",
+  },
+  {
+    name: "TextEncoder",
+    dialect: "runtime",
+    message: "`TextEncoder` is unavailable: Pi's QuickJS sandbox has no TextEncoder/TextDecoder; work with JS strings directly",
+  },
+  {
+    name: "TextDecoder",
+    dialect: "runtime",
+    message: "`TextDecoder` is unavailable: Pi's QuickJS sandbox has no TextDecoder/TextEncoder; work with JS strings directly",
+  },
+  {
+    name: "URL",
+    dialect: "runtime",
+    message: "`URL` is unavailable: Pi's QuickJS sandbox has no URL/URLSearchParams; parse and build URLs manually",
+  },
+  {
+    name: "URLSearchParams",
+    dialect: "runtime",
+    message: "`URLSearchParams` is unavailable: Pi's QuickJS sandbox has no URL/URLSearchParams; parse query strings manually",
+  },
+  {
+    name: "crypto",
+    dialect: "runtime",
+    message: "`crypto` is unavailable: Pi's QuickJS sandbox has no Web Crypto API (no `crypto.randomUUID()`)",
+  },
+  {
+    name: "fetch",
+    dialect: "runtime",
+    message: "`fetch()` is unavailable: Pi's QuickJS sandbox has no network access; call a Pi tool instead",
+  },
+  {
+    name: "process",
+    dialect: "runtime",
+    message: "`process` is unavailable: Pi's QuickJS sandbox has no Node.js runtime; use `store()`/`load()` for state",
+  },
+  {
+    name: "require",
+    dialect: "runtime",
+    message: "`require()` is unavailable: Pi's QuickJS sandbox has no Node.js module loading; call a Pi tool instead",
+  },
+  {
+    name: "Buffer",
+    dialect: "runtime",
+    message: "`Buffer` is unavailable: Pi's QuickJS sandbox has no Node.js Buffer; use `atob`/`btoa` for base64",
   },
   {
     name: "ToolCallError",

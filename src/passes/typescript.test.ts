@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { UNSUPPORTED_GLOBALS } from "../dialect/signals.ts";
 import { stripTypeScriptSyntax } from "./typescript.ts";
 
 describe("stripTypeScriptSyntax", () => {
@@ -40,6 +41,25 @@ describe("stripTypeScriptSyntax", () => {
     expect(result.changed).toBe(false);
     expect(result.code).toBe("const = ;");
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("never emits unsupported-globals identifiers (require/Buffer/process/...) of its own", () => {
+    // TanStack/Vercel/PTC fixtures are TypeScript; sucrase must only REMOVE
+    // syntax. If the pass ever emitted a runtime-global name, the translator's
+    // `runtime` rows would warn about compiler-generated code, not model code.
+    const input = [
+      "interface Opts { q: string }",
+      "type R = { ok: boolean };",
+      "const pick = (o: Opts): R => ({ ok: true });",
+      "const n = 1 as const;",
+      "const merged = { ...pick({ q: 'x' }) } satisfies R;",
+      "return merged;",
+    ].join("\n");
+    const result = stripTypeScriptSyntax(input);
+    expect(result.changed).toBe(true);
+    for (const entry of UNSUPPORTED_GLOBALS) {
+      expect(result.code).not.toMatch(new RegExp(`\\b${entry.name}\\b`));
+    }
   });
 
   it("does not truncate a script that contains the wrapper end marker literally", () => {

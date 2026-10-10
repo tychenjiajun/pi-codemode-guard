@@ -22,6 +22,33 @@ export const PI_SANDBOX_GLOBALS: readonly string[] = [
   "store",
   "load",
   "exit",
-  "structuredClone",
   "queueMicrotask",
+];
+
+/**
+ * Real QuickJS builtins that ARE present in Pi's codemode sandbox (verified
+ * against `Object.getOwnPropertyNames(globalThis)` in the live sandbox),
+ * beyond the injected globals above. This is a pure data list consumed by
+ * `dialect/translate.ts`: these names must never be mistaken for a provider
+ * namespace (`performance.now()` is valid and must stay silent) or for a bare
+ * tool name. It exists so "present in the sandbox" has one home — the
+ * "absent from the sandbox" vocabulary is `UNSUPPORTED_GLOBALS` in
+ * `dialect/signals.ts`.
+ */
+export const PI_SANDBOX_BUILTINS: readonly string[] = [
+  "performance",
+  "atob",
+  "btoa",
+  "queueMicrotask",
+  "escape",
+  "unescape",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "encodeURI",
+  "decodeURI",
+  "encodeURIComponent",
+  "decodeURIComponent",
+  "eval",
 ];

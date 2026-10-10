@@ -35,17 +35,17 @@
 import { buildCatalog, collectChain, resolveToolPath } from "../core/catalog.ts";
 import { buildCloudflareCatalog, resolveCloudflarePath } from "../core/cloudflare-names.ts";
 import { parseScript, walk, type AstNode } from "../core/parse.ts";
-import { PI_SANDBOX_GLOBALS } from "../core/pi-globals.ts";
+import { PI_SANDBOX_BUILTINS, PI_SANDBOX_GLOBALS } from "../core/pi-globals.ts";
 import { applyReplacements, selectReplacements, type Replacement } from "../core/replacements.ts";
 import { collectBoundNames, isReferenceIdentifier, isShadowedAt } from "../core/scope.ts";
 import { CLOUDFLARE_PLATFORM_SHIMS, CLOUDFLARE_PLATFORM_UNSUPPORTED, CODEMODE_KEYS_SHIM, namespaceKeysShim, OPENCODE_SEARCH_SHIM } from "../core/shims.ts";
-import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.ts";
+import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBALS, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.ts";
 
 // Re-exported so the public translate subpath keeps exposing the Cloudflare
 // name helpers it always has.
 export { cloudflareSanitize, cloudflareUnsanitize } from "../core/cloudflare-names.ts";
 
-export type TranslateGroup = "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "bare";
+export type TranslateGroup = "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "bare" | "runtime";
 
 export interface TranslateOptions {
   /** Pi tool names, from `pi.getAllTools()`. */
@@ -91,8 +91,20 @@ const JS_GLOBALS = new Set([
 /** Pi codemode sandbox helpers: addresses, not provider namespaces or tool calls. */
 const PI_HELPERS = new Set(PI_SANDBOX_GLOBALS);
 
-/** Names a bare call may never be rewritten into `tools.<name>`. */
-const RESERVED_GLOBALS = new Set([...JS_GLOBALS, ...PI_HELPERS]);
+/**
+ * Names that are neither a tool namespace (a member-chain root) nor a bare tool
+ * call: JS globals, Pi's sandbox globals and present builtins, and every name
+ * in the unsupported-globals table. The table names are here so a reference
+ * produces exactly ONE warning — its own (`unsupported:<name>`) — and never a
+ * bogus "could not resolve Cloudflare provider" one (`crypto.randomUUID()`),
+ * and present builtins stay completely silent (`performance.now()` works).
+ */
+const RESERVED_GLOBALS = new Set<string>([
+  ...JS_GLOBALS,
+  ...PI_HELPERS,
+  ...PI_SANDBOX_BUILTINS,
+  ...UNSUPPORTED_GLOBALS.map((entry) => entry.name),
+]);
 
 // ---------------------------------------------------------------------------
 // Statement translation
@@ -378,7 +390,7 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
     }
 
     if (bound.has(chain.root)) return;
-    if (JS_GLOBALS.has(chain.root) || PI_HELPERS.has(chain.root)) return;
+    if (RESERVED_GLOBALS.has(chain.root)) return;
     if (chain.root === "codemode") {
       cloudflareMember(node, chain);
       return;

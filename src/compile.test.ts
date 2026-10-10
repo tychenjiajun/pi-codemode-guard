@@ -267,6 +267,20 @@ describe("compileCodemodeSource", () => {
     expect(result.warnings.some((warning) => warning.includes("codemode.run"))).toBe(true);
   });
 
+  it("blames the missing sandbox global, not a Cloudflare provider, for crypto.randomUUID()", () => {
+    const result = compileCodemodeSource("const id = crypto.randomUUID();\ntext(id);", { tools: ["read"] });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("crypto");
+    expect(result.warnings[0]).not.toContain("Cloudflare");
+    expect(result.code).toBe("const id = crypto.randomUUID();\ntext(id);");
+  });
+
+  it("stays silent for performance.now() — it works in Pi's sandbox", () => {
+    const result = compileCodemodeSource("text(String(performance.now()));", { tools: ["read"] });
+    expect(result.warnings).toEqual([]);
+    expect(result.code).toBe("text(String(performance.now()));");
+  });
+
   it("never throws on unparseable source, and only runs lexical passes", () => {
     const result = compileCodemodeSource("```js\nconst = ;\n```");
     expect(result.parsed).toBe(false);
