@@ -172,6 +172,13 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
       return;
     }
     if (chain.segments.length < 2) return;
+    // A property access on a live tool handle — `tools.read.length`,
+    // `tools.bash.output` — is not a namespace path: the FIRST segment alone
+    // already resolves to a catalog tool, so there is nothing to flatten.
+    // Detection stays catalog-free (it still reports this shape as `opencode`,
+    // see detect.ts), but translation must never rewrite or warn here — the
+    // flattened `tools.read__length` throws in Pi's sandbox.
+    if (resolveToolPath([chain.segments[0]!], catalog).matched !== undefined) return;
     // Only treat a nested `tools.<a>.<b>` path as a namespace path when the
     // detected dialect is OpenCode, or the live catalog confirms the path.
     // Otherwise `tools.read.length` (a function property) would be flattened.

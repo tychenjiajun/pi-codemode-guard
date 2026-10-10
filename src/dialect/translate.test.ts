@@ -82,6 +82,67 @@ describe("translateCodemode: mixed dialects in one snippet", () => {
   });
 });
 
+describe("translateCodemode: property access on a tool handle", () => {
+  const tools = ["read", "bash", "subagent_start"];
+
+  it("leaves `tools.read.length` alone when the dialect is OpenCode", () => {
+    const result = translateCodemode("text(tools.read.length > 0);", { tools, dialect: "opencode" });
+    expect(result.changed).toBe(false);
+    expect(result.code).toBe("text(tools.read.length > 0);");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("leaves `tools.bash.output` and `tools.subagent_start.name` alone", () => {
+    const source = "text(tools.bash.output);\ntext(tools.subagent_start.name);";
+    const result = translateCodemode(source, { tools, dialect: "opencode" });
+    expect(result.changed).toBe(false);
+    expect(result.code).toBe(source);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("leaves the property access alone for the pi dialect too", () => {
+    const source = "text(tools.bash.output);";
+    const result = translateCodemode(source, { tools, dialect: "pi" });
+    expect(result.changed).toBe(false);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("leaves a single-segment tool access alone", () => {
+    const result = translateCodemode("const r = await tools.read({ path: \"x\" });", {
+      tools,
+      dialect: "opencode",
+    });
+    expect(result.changed).toBe(false);
+  });
+
+  it("still flattens a namespace path whose first segment is not a tool", () => {
+    const result = translateCodemode("const o = await tools.orders.lookup({ id: 1 });", {
+      tools: ["orders.lookup"],
+      dialect: "opencode",
+    });
+    expect(result.code).toBe("const o = await tools.orders_lookup({ id: 1 });");
+    expect(result.groups.opencode).toBe(1);
+  });
+
+  it("still flattens and warns when no segment resolves", () => {
+    const result = translateCodemode("const r = await tools.dev_radius.search({ q: 1 });", {
+      tools: ["read"],
+      dialect: "opencode",
+    });
+    expect(result.code).toBe("const r = await tools.dev_radius__search({ q: 1 });");
+    expect(result.warnings.some((w) => w.includes("could not resolve OpenCode tool path"))).toBe(true);
+  });
+
+  it("is idempotent for tool-handle property access", () => {
+    const source = "text(tools.read.length > 0);\ntext(tools.bash.output);";
+    const options = { tools, dialect: "opencode" as const };
+    const once = translateCodemode(source, options);
+    const twice = translateCodemode(once.code, options);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+});
+
 describe("translateCodemode: Object.keys disambiguation", () => {
   it("uses the OpenCode spelling by default", () => {
     const result = translateCodemode("const n = Object.keys(tools);", { tools: [] });

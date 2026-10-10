@@ -369,6 +369,30 @@ describe("compileCodemodeSource", () => {
     expect(result.code).toBe("await tools.a_b({});");
     expect(result.warnings).toEqual([]);
   });
+
+  it("keeps property access on a tool handle unchanged through the pipeline", () => {
+    const source = "text(tools.read.length > 0);\ntext(tools.bash.output);";
+    const options = { tools: ["read", "bash", "subagent_start"] };
+    const once = compileCodemodeSource(source, options);
+    expect(once.code).toBe(source);
+    expect(once.changed).toBe(false);
+    expect(once.warnings.some((w) => w.includes("could not resolve OpenCode tool path"))).toBe(false);
+    const twice = compileCodemodeSource(once.code, options);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
+
+  it("keeps `tools.subagent_start.name` unchanged through the pipeline", () => {
+    const source = "text(tools.subagent_start.name);";
+    const options = { tools: ["read", "bash", "subagent_start"] };
+    const once = compileCodemodeSource(source, options);
+    expect(once.code).toBe(source);
+    expect(once.changed).toBe(false);
+    expect(once.warnings.some((w) => w.includes("could not resolve OpenCode tool path"))).toBe(false);
+    const twice = compileCodemodeSource(once.code, options);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(once.code);
+  });
 });
 
 describe("JSON tool-call programs", () => {
