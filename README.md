@@ -12,36 +12,92 @@ English | [简体中文](./README.zh-CN.md)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
+[![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
+[![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
+> **In one sentence:** *a best-effort, idempotent compiler that turns broken
+> codemode tool calls from any LLM into the exact JavaScript pi's QuickJS
+> sandbox expects — without forking codemode.*
+
 **pi-codemode-guard** is an open-source (MIT), TypeScript extension for the
-[pi](https://github.com/earendil-works/pi) AI coding agent that **repairs
-LLM-written `codemode` scripts before they reach the sandbox**. It inserts
+[pi](https://github.com/earendil-works/pi) AI coding agent. `codemode` is pi's
+tool for running one model-written JavaScript script that calls pi's other
+tools inside a QuickJS sandbox — and **many models write that script wrong**.
+The guard **repairs the script before it reaches the sandbox**: it inserts
 missing `await`, strips markdown fences, converts JSON tool-call programs into
-real JavaScript, normalizes `@options:` / `@exec:` pragmas, unwraps async IIFEs, and
-translates the OpenCode, Cloudflare agents, TanStack AI, Vercel AI SDK,
+real JavaScript, normalizes `@options:` / `@exec:` pragmas, unwraps async IIFEs,
+and translates the OpenCode, Cloudflare agents, TanStack AI, Vercel AI SDK,
 DeepSeek Harness PTC, and OpenAI Codex code mode dialects — so AI-generated
 agent scripts run instead of silently failing.
 
-In one sentence: *a best-effort, idempotent compiler that turns broken
-codemode tool calls from any LLM into the exact JavaScript pi's QuickJS sandbox
-expects — without forking the codemode implementation.*
+Typical model mistakes: a markdown fence around the script, a JSON tool-call
+program instead of JavaScript, a wrong field name (`script` instead of `code`),
+a relaxed `@options:` line, an async IIFE wrapper, or a forgotten `await` — and
+an unawaited tool call is silently JSON-serialized as `{}`.
 
-Many models cannot write pi's codemode tool call correctly. They wrap the script
-in a markdown fence, send it as JSON tool calls, use the wrong field name, write
-a relaxed `@options:` line, wrap everything in an async IIFE, or forget the
-`await` — and an unawaited tool call is silently JSON-serialized as `{}`.
+## Before → after
 
-`pi-codemode-guard` fixes all of that before the script reaches the sandbox,
-without forking the codemode implementation.
+<p align="center">
+  <img src="./assets/demo.gif" alt="The model writes a fenced script without await; pi-codemode-guard compiles it; the sandbox receives await searchTools(…)" width="880">
+</p>
 
+Real output of `compileCodemodeSource`, the compiler every `codemode` call
+runs through:
+
+**Markdown fence + missing `await`** — the `feishu: {}` bug (pi issue
+[#10555](https://github.com/earendil-works/pi/issues/10555)). The model
+writes:
+
+````markdown
+```js
+const hits = searchTools("feishu")
 ```
-model                      pi-codemode-guard                    codemode sandbox
-───────────────────────────────────────────────────────────────────────────────
-{ script: "```js … ```" }  →  { code: "…" } (aliases)          →  runs the
-[a1, a2] JSON tool calls   →  await tools.*() (compiler)           intended
-const x = searchTools(...) →  const x = await searchTools(...)      script
+````
+
+The sandbox receives:
+
+```js
+const hits = await searchTools("feishu")
 ```
+
+**JSON tool-call program.** The model writes:
+
+```json
+[{"tool":"read","args":{"path":"package.json"}}]
+```
+
+The sandbox receives:
+
+```js
+const _result0 = await tools.read({"path":"package.json"});
+return _result0;
+```
+
+**Another dialect.** The model writes (OpenCode):
+
+```js
+const r = await tools.orders.lookup({ id: 1 });
+```
+
+Resolved against pi's live tool catalog, the sandbox receives:
+
+```js
+const r = await tools.orders_lookup({ id: 1 });
+```
+
+Compile any of these again and nothing changes: every pass is idempotent, and
+a script that does not parse is returned unchanged with a warning — a guard
+bug can never block a tool call.
+
+Install in one command (it registers pi's `codemode` tool itself):
+
+```bash
+pi install npm:pi-codemode-guard
+```
+
+Other sources (git, local checkout, one-session `pi -e`), the security note,
+and the pi ≥ 1.1.0 startup warning: see [Install](#install).
 
 ## Why
 

@@ -66,6 +66,8 @@
     "!src/**/*.test.ts",
     "!src/**/test-support.ts",
     "assets/preview.svg",
+    "assets/preview.png",
+    "assets/demo.gif",
     "README.md",
     "README.zh-CN.md",
     "CONTEXT.md",

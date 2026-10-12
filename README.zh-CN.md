@@ -12,30 +12,86 @@
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
 [![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
+[![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
+[![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
 
+> **一句话概括：** *一个尽力而为、幂等的编译器，把任意 LLM 写坏的 codemode 工具
+> 调用转换成 pi 的 QuickJS 沙箱所期望的确切 JavaScript —— 且完全不 fork codemode
+> 的实现。*
+
 **pi-codemode-guard** 是一个开源（MIT 协议）、TypeScript 编写的
-[pi](https://github.com/earendil-works/pi) AI 编程智能体扩展，用于**在脚本进入沙箱之前
-修复 LLM 编写的 `codemode` 脚本**。它会补上缺失的 `await`、剥掉 markdown 代码围栏、把
-JSON 工具调用程序转换成真正的 JavaScript、规范化 `@options:` / `@exec:` pragma、拆掉多余的 async IIFE，
-并翻译 OpenCode、Cloudflare agents、TanStack AI、Vercel AI SDK、DeepSeek Harness PTC 与 OpenAI Codex code mode 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
+[pi](https://github.com/earendil-works/pi) AI 编程智能体扩展。`codemode` 是 pi 的
+tool，用于把模型写的一段 JavaScript 脚本放进 QuickJS 沙箱执行、并在其中调用 pi 的
+其他工具 —— 而**很多模型写不对这段脚本**。本扩展**在脚本进入沙箱之前修复它**：
+补上缺失的 `await`、剥掉 markdown 代码围栏、把 JSON 工具调用程序转换成真正的
+JavaScript、规范化 `@options:` / `@exec:` pragma、拆掉多余的 async IIFE，
+并翻译 OpenCode、Cloudflare agents、TanStack AI、Vercel AI SDK、DeepSeek Harness PTC
+与 OpenAI Codex code mode 方言 —— 让 AI 生成的智能体脚本真正跑起来，而不是静默失败。
 
-一句话概括：*一个尽力而为、幂等的编译器，把任意 LLM 写坏的 codemode 工具调用转换成
-pi 的 QuickJS 沙箱所期望的确切 JavaScript —— 且完全不 fork codemode 的实现。*
+模型常见的错误：把脚本包在 markdown 围栏里、用 JSON 工具调用程序代替 JavaScript、
+用错字段名（`script` 而不是 `code`）、写成宽松的 `@options:` 行、包一层 async IIFE、
+或者忘记 `await` —— 而未 await 的工具调用会被静默地 JSON 序列化成 `{}`。
 
-很多模型写不对 pi 的 codemode 工具调用：它们把脚本包在 markdown 围栏里、用 JSON 工具
-调用的形式发送、用错字段名、写成宽松的 `@options:` 行、把一切包进 async IIFE、或者忘记
-`await` —— 而未 await 的工具调用会被静默地 JSON 序列化成 `{}`。
+## 修复前 → 修复后
 
-`pi-codemode-guard` 在脚本到达沙箱之前修复以上所有问题，同样不 fork codemode 的实现。
+<p align="center">
+  <img src="./assets/demo.gif" alt="模型写了带围栏且缺 await 的脚本；pi-codemode-guard 编译后，沙箱收到 await searchTools(…)" width="880">
+</p>
 
+以下都是 `compileCodemodeSource`（每次 `codemode` 调用都会经过的编译器）的真实输出：
+
+**markdown 围栏 + 缺失 `await`** —— `feishu: {}` bug（pi issue
+[#10555](https://github.com/earendil-works/pi/issues/10555)）。模型写的是：
+
+````markdown
+```js
+const hits = searchTools("feishu")
 ```
-模型                       pi-codemode-guard                    codemode 沙箱
-───────────────────────────────────────────────────────────────────────────────
-{ script: "```js … ```" }  →  { code: "…" } (字段别名)           →  执行目标
-[a1, a2] JSON 工具调用     →  await tools.*() (编译)                脚本
-const x = searchTools(...) →  const x = await searchTools(...)
+````
+
+沙箱收到的是：
+
+```js
+const hits = await searchTools("feishu")
 ```
+
+**JSON 工具调用程序。** 模型写的是：
+
+```json
+[{"tool":"read","args":{"path":"package.json"}}]
+```
+
+沙箱收到的是：
+
+```js
+const _result0 = await tools.read({"path":"package.json"});
+return _result0;
+```
+
+**另一种方言。** 模型写的是（OpenCode）：
+
+```js
+const r = await tools.orders.lookup({ id: 1 });
+```
+
+对照 pi 的实时工具目录解析后，沙箱收到的是：
+
+```js
+const r = await tools.orders_lookup({ id: 1 });
+```
+
+对以上任何一例再编译一次都不会再变化：每个 pass 都是幂等的；无法解析的脚本会
+原样返回并附带一条警告 —— 本扩展的 bug 永远不会阻断一次工具调用。
+
+一条命令安装（它会自行注册 pi 的 `codemode` tool）：
+
+```bash
+pi install npm:pi-codemode-guard
+```
+
+其他安装来源（git、本地 checkout、单次会话 `pi -e`）、安全提示，以及 pi ≥ 1.1.0
+的启动警告：见 [安装](#安装)。
 
 ## 为什么需要它
 
