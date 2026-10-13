@@ -228,6 +228,16 @@ describe("codemodeGuardExtension", () => {
     expect(mock.handlers.has("tool_result")).toBe(true);
   });
 
+  it("keeps the built-in codemode tool's reachesTools (pi 1.2.0 MCP activation)", () => {
+    const mock = mockPi();
+    codemodeGuardExtension(mock.pi);
+    const tool = mock.registered[0]!;
+    // pi 1.2.0 only activates `codemode` for MCP tools when the registered
+    // tool declares reachesTools; augmentCodemodeTool must not drop it.
+    expect(typeof tool.reachesTools).toBe("function");
+    expect(tool.reachesTools!({ code: "const x = 1;" })).toBeDefined();
+  });
+
   it("compiles a codemode call and stamps the guard details", async () => {
     const mock = mockPi();
     codemodeGuardExtension(mock.pi);

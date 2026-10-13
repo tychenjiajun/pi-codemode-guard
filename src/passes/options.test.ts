@@ -53,11 +53,41 @@ describe("splitOptionsLine", () => {
     expect(result.body).toContain("// a note");
   });
 
-  it("ignores an options line that appears after code", () => {
+  it("moves an options line that appears after code to the first line", () => {
+    // pi >= 1.2.0 fails the call when `// @options:` is not the first line,
+    // so the guard must relocate it instead of ignoring it.
     const input = 'const x = 1;\n// @options: {"timeout_ms": 1000}';
     const result = splitOptionsLine(input);
-    expect(result.changed).toBe(false);
-    expect(result.body).toBe(input);
+    expect(result.changed).toBe(true);
+    expect(result.optionsLine).toBe('// @options: {"timeout_ms": 1000}');
+    expect(result.body).toBe("const x = 1;");
+    expect(result.warnings.some((warning) => warning.includes("first line"))).toBe(true);
+  });
+
+  it("neutralizes a duplicate exact `// @options:` line after the first", () => {
+    const input = '// @options: {"timeout_ms": 1000}\nconst x = 1;\n// @options: {"timeout_ms": 2000}';
+    const result = splitOptionsLine(input);
+    expect(result.changed).toBe(true);
+    expect(result.optionsLine).toBe('// @options: {"timeout_ms": 1000}');
+    expect(result.body).not.toContain("// @options:");
+    expect(result.body).toContain("removed a misplaced @options line");
+    expect(result.warnings.some((warning) => warning.includes("duplicate"))).toBe(true);
+  });
+
+  it("finds a directive below the 12-line scan window", () => {
+    const notes = Array.from({ length: 14 }, (_, index) => `// note ${index}`);
+    const input = [...notes, '// @options: {"timeout_ms": 5000}', "return 1;"].join("\n");
+    const result = splitOptionsLine(input);
+    expect(result.optionsLine).toBe('// @options: {"timeout_ms": 5000}');
+    expect(result.body).toContain("// note 13");
+    expect(result.body).toContain("return 1;");
+    expect(result.body).not.toContain("// @options:");
+  });
+
+  it("finds an indented directive in the leading comment block", () => {
+    const result = splitOptionsLine('  // @options: {"timeout_ms": 1000}\nreturn 1;');
+    expect(result.optionsLine).toBe('// @options: {"timeout_ms": 1000}');
+    expect(result.body).toBe("return 1;");
   });
 
   it("passes prose that only looks like a bare options directive through untouched", () => {

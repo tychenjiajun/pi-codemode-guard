@@ -26,6 +26,14 @@
 // The guard rewrites the line into the canonical form, maps the common field
 // aliases, and drops the options entirely when nothing usable remains so an
 // invalid line cannot fail the whole script.
+//
+// Since pi 1.2.0, `parseCodemodeSource` *fails the call* when a line starting
+// with `// @options:` sits anywhere but the first line (before 1.2.0 it was
+// silently ignored). The leading-block scan below never reaches such lines
+// (they follow code, are indented past the scan, or fall below its 12-line
+// window), so a second pass relocates the first one to the front and
+// neutralizes any others — an exact-prefix line left in place would now reject
+// the whole script.
 
 import { parseLooseOptionsObject } from "./loose-json.ts";
 /** Keys accepted for `max_output_tokens`. */
@@ -64,6 +72,8 @@ const YIELD_TIME_ALIASES = ["yield_time_ms", "yieldTimeMs", "yield_time", "yield
 // and must pass through untouched. The `@` form is always taken as a
 // directive (pi would reject the script otherwise) and neutralized with a
 // warning when it does not parse.
+/** Pi's exact options prefix (`pi-codemode` `parseCodemodeSource`). */
+const PI_OPTIONS_PREFIX = "// @options:";
 const COMMENT_PREFIX = "(?:\\/\\/+|#|\\/\\*+|<!--)";
 const DIRECTIVE_AT = new RegExp(
   `^${COMMENT_PREFIX}\\s*@(options?|exec)\\b\\s*[:=]?\\s*(.*?)\\s*(?:\\*\\/|-->)?\\s*$`,
@@ -161,14 +171,15 @@ export function splitOptionsLine(code: string): OptionsSplitResult {
     const line = lines[index]!;
     if (line.trim() === "") continue;
     if (!isCommentLine(line)) break;
-    const at = line.match(DIRECTIVE_AT);
+    const trimmed = line.trimStart();
+    const at = trimmed.match(DIRECTIVE_AT);
     if (at) {
       foundIndex = index;
       directive = (at[1] ?? "").toLowerCase() === "exec" ? "exec" : "options";
       directiveBody = at[2] ?? "";
       break;
     }
-    const bare = line.match(DIRECTIVE_BARE);
+    const bare = trimmed.match(DIRECTIVE_BARE);
     if (bare) {
       foundIndex = index;
       directive = "options";
@@ -177,14 +188,46 @@ export function splitOptionsLine(code: string): OptionsSplitResult {
     }
   }
 
+  // Lines the leading-block scan never reached that pi 1.2.0 would reject:
+  // anything starting with the exact `// @options:` prefix at index > 0
+  // (pi only accepts it on the first line). Promote the first one to the
+  // directive; neutralize the rest so no exact-prefix line survives.
+  const misplaced: number[] = [];
+  for (let index = 1; index < lines.length; index++) {
+    if (index === foundIndex) continue;
+    if (lines[index]!.trimStart().startsWith(PI_OPTIONS_PREFIX)) misplaced.push(index);
+  }
+  let promoted = false;
+  if (foundIndex === -1 && misplaced.length > 0) {
+    const index = misplaced.shift()!;
+    const trimmed = lines[index]!.trimStart();
+    const at = trimmed.match(DIRECTIVE_AT);
+    foundIndex = index;
+    directive = "options";
+    directiveBody = at?.[2] ?? trimmed.slice(PI_OPTIONS_PREFIX.length);
+    promoted = true;
+  }
+
   if (foundIndex === -1) return { body: code, changed: false, warnings: [] };
 
   const withoutLine = [...lines];
+  // Replace in place (no splice) so the indices stay stable for the removal
+  // below.
+  for (const index of misplaced) {
+    withoutLine[index] =
+      "// pi-codemode-guard: removed a misplaced @options line (Pi requires it on the first line)";
+  }
   withoutLine.splice(foundIndex, 1);
 
   const parsedObject = parseLooseOptionsObject(directiveBody);
   const options = parsedObject ? mapCodemodeOptions(parsedObject) : undefined;
   const warnings: string[] = [];
+  if (promoted) {
+    warnings.push("moved a misplaced `// @options:` line to the first line (Pi requires it there)");
+  }
+  if (misplaced.length > 0) {
+    warnings.push("removed a duplicate `// @options:` line (Pi allows it only on the first line)");
+  }
   if (directive === "exec" && parsedObject && YIELD_TIME_ALIASES.some((key) => key in parsedObject)) {
     warnings.push("dropped `yield_time_ms` from the @exec pragma; Pi streams output when the script ends");
   }
