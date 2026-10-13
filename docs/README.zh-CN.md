@@ -1,17 +1,17 @@
 # pi-codemode-guard
 
-[English](./README.md) | 简体中文
+[English](../README.md) | 简体中文
 
 <p align="center">
-  <img src="./assets/preview.svg" alt="pi-codemode-guard 在脚本进入 QuickJS 沙箱之前编译 LLM 写的 codemode 脚本" width="880">
+  <img src="../assets/preview.svg" alt="pi-codemode-guard 在脚本进入 QuickJS 沙箱之前编译 LLM 写的 codemode 脚本" width="880">
 </p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![npm](https://img.shields.io/npm/v/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://pi.dev/docs/latest/extensions)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](../tsconfig.json)
+[![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](../package.json)
 [![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -36,7 +36,7 @@ JavaScript、规范化 `@options:` / `@exec:` pragma、拆掉多余的 async IIF
 ## 修复前 → 修复后
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="模型写了带围栏且缺 await 的脚本；pi-codemode-guard 编译后，沙箱收到 await searchTools(…)" width="880">
+  <img src="../assets/demo.gif" alt="模型写了带围栏且缺 await 的脚本；pi-codemode-guard 编译后，沙箱收到 await searchTools(…)" width="880">
 </p>
 
 以下都是 `compileCodemodeSource`（每次 `codemode` 调用都会经过的编译器）的真实输出：
@@ -481,7 +481,7 @@ pnpm typecheck
 pi -e .          # 把本检出作为扩展加载，仅本次会话
 ```
 
-代码结构和设计说明见 [`AGENTS.md`](./AGENTS.md) 与 [`CONTEXT.md`](./CONTEXT.md)。
+代码结构和设计说明见 [`AGENTS.md`](../AGENTS.md) 与 [`CONTEXT.md`](../CONTEXT.md)。
 pi 官方文档：[扩展](https://pi.dev/docs/latest/extensions) ·
 [Pi 包](https://pi.dev/docs/latest/packages)。
 

@@ -1,6 +1,6 @@
 {
   "name": "pi-codemode-guard",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options/@exec pragmas, IIFE wrappers, JSON tool-call programs, missing await, bare tool calls, and the OpenCode / Cloudflare agents / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC / OpenAI Codex code mode dialects",
   "main": "src/index.ts",
@@ -69,7 +69,7 @@
     "assets/preview.png",
     "assets/demo.gif",
     "README.md",
-    "README.zh-CN.md",
+    "docs/**",
     "CONTEXT.md",
     "LICENSE"
   ],

@@ -1,6 +1,6 @@
 # pi-codemode-guard
 
-English | [简体中文](./README.zh-CN.md)
+English | [简体中文](./docs/README.zh-CN.md)
 
 <p align="center">
   <img src="./assets/preview.svg" alt="pi-codemode-guard compiles LLM codemode scripts before they reach the QuickJS sandbox" width="880">
