@@ -54,7 +54,7 @@ Root files:
 
 `passes/` — the compile passes, in pipeline order:
 - `fences.ts` — Markdown fence stripping
-- `options.ts` — `// @options:` / Codex `// @exec:` line normalization and field-alias mapping
+- `options.ts` — `// @options:` / Codex `// @exec:` line normalization and field-alias mapping; also relocates a misplaced exact `// @options:` line (pi ≥ 1.2.0 fails the call when it is not the first line) and neutralizes duplicates
 - `loose-json.ts` — tolerant JSON repair for the options body
 - `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
 - `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, DeepSeek PTC's `run_code`, and any stray TypeScript)
@@ -310,9 +310,9 @@ indistinguishable from Pi and is compiled as Pi (which is correct).
 |------|------|
 | Domain glossary | `CONTEXT.md` |
 | Interop contract | `contract.ts` |
-| Pi extension docs | [pi docs](https://github.com/earendil-works/pi-coding-agent/docs) |
+| Pi extension docs | `<pi package>/docs/extensions.md` |
 | Pi codemode docs | `<pi package>/docs/codemode.md` |
-| Pi packages | [packages.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) |
+| Pi packages docs | `<pi package>/docs/packages.md` |
 
 ## Commit Attribution
 AI commits MUST include:

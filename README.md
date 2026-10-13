@@ -11,7 +11,7 @@ English | [简体中文](./docs/README.zh-CN.md)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://pi.dev/docs/latest/extensions)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](./tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](./package.json)
+[![Tests](https://img.shields.io/badge/tests-456%20passing-brightgreen.svg)](./package.json)
 [![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -133,6 +133,7 @@ Two hooks, installed automatically:
 | `strip-code-fence` | ` ```js\nconst x = 1;\n``` ` | `const x = 1;` |
 | `normalize-options-line` | `/* @options: {'maxOutputTokens': 2000} */` | `// @options: {"max_output_tokens": 2000}` |
 | `normalize-options-line` | `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}` (+ a `yield_time_ms` warning) |
+| `normalize-options-line` | `// @options: {"timeout_ms": 1000}` after the first line | moved to the first line (+ duplicates removed) — pi ≥ 1.2.0 fails the call otherwise |
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
 | `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
 | `vercel-typescript` | `const c: string = "London";` | `const c = "London";` |
@@ -434,9 +435,12 @@ The built-in `codemode` tool is registered by an extension that pi marks
 reimplementing it would lose `models`, `store()` persistence, and
 `codemode.mode`. Instead the guard runs the canonical
 `createCodemodeExtension()` factory through a small `pi` proxy whose
-`registerTool` adds the argument shim and a compile receipt. The tool keeps
-`parameters === codemodeSchema` (so `isCodemodeTool` still recognizes it) and
-all of its original options.
+`registerTool` adds the argument shim and a compile receipt. The proxy spreads
+the canonical definition, so the tool keeps `parameters === codemodeSchema`,
+`reachesTools`, `prepareLoadout`, `defaultActive: false`, and all of its other
+original options — pi 1.2.0 relies on `reachesTools` (not on the old
+`isCodemodeTool` helper, removed in 1.2.0) to decide whether a replacement
+`codemode` can reach MCP tools.
 
 ## Built on pi
 
@@ -528,7 +532,7 @@ the replacement.
 
 ```bash
 pnpm install
-pnpm test        # 452 unit tests
+pnpm test        # 456 unit tests
 pnpm typecheck
 pi -e .          # load this checkout as an extension for one session
 ```

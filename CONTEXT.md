@@ -50,6 +50,7 @@ text(`${a.length} + ${b.length} bytes`);
 | ` ```js … ``` ` fences, sometimes with prose | fences are not valid JavaScript | `strip-code-fence` |
 | `// @options {"max_output_tokens": 2000}` (no colon) | not the exact `// @options:` prefix | `normalize-options-line` |
 | `/* @options: {'maxOutputTokens': 2000} */` | block comment + single quotes + camelCase field | `normalize-options-line` |
+| `// @options: {...}` not on the first line | pi ≥ 1.2.0 fails the call unless the exact `// @options:` line is line 1 (before that it was silently ignored) | `normalize-options-line` (moved to the top; duplicates removed) |
 | `const n: number = 1;` as a whole script (no dialect claimed it) | acorn cannot parse TypeScript | `strip-typescript` (generic fallback, then re-detect the dialect) |
 | `(async () => { … })();` | redundant wrapper; unawaited it may never run | `unwrap-iife` |
 | `const hits = searchTools("x");` | promise serialized as `{}` (pi issue #10555) | `await-async-calls` |

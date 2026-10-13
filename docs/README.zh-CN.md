@@ -11,7 +11,7 @@
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed.svg)](https://pi.dev/docs/latest/extensions)
 [![pi package](https://img.shields.io/badge/pi-package-7c3aed.svg)](https://pi.dev/docs/latest/packages)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](../tsconfig.json)
-[![Tests](https://img.shields.io/badge/tests-452%20passing-brightgreen.svg)](../package.json)
+[![Tests](https://img.shields.io/badge/tests-456%20passing-brightgreen.svg)](../package.json)
 [![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
@@ -124,6 +124,7 @@ pi install npm:pi-codemode-guard
 | `strip-code-fence` | ` ```js\nconst x = 1;\n``` ` | `const x = 1;` |
 | `normalize-options-line` | `/* @options: {'maxOutputTokens': 2000} */` | `// @options: {"max_output_tokens": 2000}` |
 | `normalize-options-line` | `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | `// @options: {"max_output_tokens": 1000}`（并对 `yield_time_ms` 告警）|
+| `normalize-options-line` | `// @options: {"timeout_ms": 1000}` 不在第一行 | 移到第一行（重复行会被移除）—— pi ≥ 1.2.0 否则直接失败 |
 | `compile-json-program` | `[{"tool":"read","args":{"path":"a"}}]` | `const _result0 = await tools.read({"path":"a"});\nreturn _result0;` |
 | `tanstack-typescript` | `const city: string = "London";` | `const city = "London";` |
 | `vercel-typescript` | `const c: string = "London";` | `const c = "London";` |
@@ -394,8 +395,11 @@ pi -e npm:pi-codemode-guard
 `builtin: true, replaceable: true`），重新实现它会丢失 `models`、
 `store()` 持久化和 `codemode.mode`。本扩展的做法是让规范的
 `createCodemodeExtension()` 工厂通过一个小型 `pi` 代理运行，由其 `registerTool`
-追加参数垫片和编译回执。工具仍然保持 `parameters === codemodeSchema`
-（因此 `isCodemodeTool` 仍能识别它），并保留其全部原始选项。
+追加参数垫片和编译回执。代理展开规范定义，因此工具仍然保持
+`parameters === codemodeSchema`、`reachesTools`、`prepareLoadout`、
+`defaultActive: false` 及其余全部原始选项——pi 1.2.0 依靠 `reachesTools`
+（而非 1.2.0 中已移除的旧 `isCodemodeTool` 辅助函数）判断替换的 `codemode`
+能否触达 MCP 工具。
 
 ## 基于 pi 构建
 
@@ -476,7 +480,7 @@ markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`
 
 ```bash
 pnpm install
-pnpm test        # 452 个单元测试
+pnpm test        # 456 个单元测试
 pnpm typecheck
 pi -e .          # 把本检出作为扩展加载，仅本次会话
 ```
