@@ -26,6 +26,19 @@ export const PI_SANDBOX_GLOBALS: readonly string[] = [
 ];
 
 /**
+ * The parameters of Pi's wrapper function. Pi runs every script as the body of
+ * `(async (tools, console) => { <script> })` (see pi's codemode-worker), so a
+ * *lexical* declaration of either name at the top level of the script —
+ * `let`/`const`/`class`, including destructuring bindings — is a syntax error
+ * in the sandbox (QuickJS: `invalid redefinition of parameter name`). `var`
+ * and `function` declarations are var-scoped and legal (they redeclare the
+ * parameter binding), and declarations in nested scopes shadow the parameter
+ * without conflicting. Consumed by `passes/wrapper.ts`, which renames the
+ * colliding binding.
+ */
+export const PI_WRAPPER_PARAMS: readonly string[] = ["tools", "console"];
+
+/**
  * Real QuickJS builtins that ARE present in Pi's codemode sandbox (verified
  * against `Object.getOwnPropertyNames(globalThis)` in the live sandbox),
  * beyond the injected globals above. This is a pure data list consumed by
@@ -33,7 +46,8 @@ export const PI_SANDBOX_GLOBALS: readonly string[] = [
  * namespace (`performance.now()` is valid and must stay silent) or for a bare
  * tool name. It exists so "present in the sandbox" has one home — the
  * "absent from the sandbox" vocabulary is `UNSUPPORTED_GLOBALS` in
- * `dialect/signals.ts`.
+ * `dialect/signals.ts`. Both this table and `JS_GLOBALS` are reconciled
+ * against a live sandbox probe by `core/pi-globals.test.ts`.
  */
 export const PI_SANDBOX_BUILTINS: readonly string[] = [
   "performance",
@@ -52,6 +66,9 @@ export const PI_SANDBOX_BUILTINS: readonly string[] = [
   "decodeURIComponent",
   "eval",
   "console",
+  // Engine/host extras QuickJS ships beyond ECMA-262.
+  "DOMException",
+  "InternalError",
 ];
 
 /**
@@ -60,7 +77,8 @@ export const PI_SANDBOX_BUILTINS: readonly string[] = [
  * own properties of `globalThis` in the live sandbox. Deliberately contains NO
  * host/environment API: an absent one lives in `PI_SANDBOX_HOST_GLOBALS` below
  * and gets an `UNSUPPORTED_GLOBALS` row instead, so a catalog tool with a
- * colliding name still rewrites (and warns at most once).
+ * colliding name still rewrites (and warns at most once). Reconciled against
+ * a live sandbox probe by `core/pi-globals.test.ts`.
  */
 export const JS_GLOBALS: readonly string[] = [
   "Array", "ArrayBuffer", "BigInt", "Boolean", "DataView", "Date", "Error", "EvalError",
@@ -69,6 +87,9 @@ export const JS_GLOBALS: readonly string[] = [
   "RangeError", "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
   "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array", "Uint8ClampedArray",
   "WeakMap", "WeakRef", "WeakSet", "globalThis", "undefined",
+  // Newer editions, verified present in the sandbox's QuickJS.
+  "AggregateError", "AsyncDisposableStack", "BigInt64Array", "BigUint64Array", "DisposableStack",
+  "Float16Array", "Function", "Iterator", "SharedArrayBuffer", "SuppressedError",
 ];
 
 /**

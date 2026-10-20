@@ -42,12 +42,12 @@ Root files:
 
 `core/` — pure, dialect-agnostic infrastructure (no rewriting):
 - `parse.ts` — Shared acorn parsing helpers (`parseScript`, `childNodes`, `walk`, `memberPropertyName`, `isFunctionNode`)
-- `scope.ts` — Scope/binding analysis (`collectBoundNames`, `isShadowedAt`, `isReferenceIdentifier`, `isDeclarationPosition`), shared by detection, translation and the await pass
+- `scope.ts` — Scope/binding analysis (`collectBoundNames`, `isShadowedAt`, `isReferenceIdentifier`, `isDeclarationPosition`, `patternBinds`), shared by detection, translation, the await pass and the wrapper-parameter rename
 - `catalog.ts` — Tool catalog (`buildCatalog`) and catalog-aware path resolution (`resolveToolPath`, with dialect hooks for an alternate spelling and a fallback)
 - `cloudflare-names.ts` — Cloudflare's `sanitizeToolName` rules and `resolveCloudflarePath` (a `resolveToolPath` built with Cloudflare's spelling as the alternate identifier)
 - `replacements.ts` — Shared source-range replacement selection (`selectReplacements`) and splicing (`applyReplacements`)
 - `identifiers.ts` — pi's `toCodemodeIdentifier` rule
-- `pi-globals.ts` — the single home for the sandbox environment vocabulary: `PI_LOOKUP_HELPERS` (the promise-returning helpers — the await pass's `ASYNC_GLOBALS` and a detector signal), `PI_SANDBOX_GLOBALS` (every non-tool identifier pi injects), `PI_SANDBOX_BUILTINS` and `JS_GLOBALS` (QuickJS builtins and ambient language globals verified present in the sandbox, so the translator never mistakes one for a provider namespace or a bare tool), and `PI_SANDBOX_HOST_GLOBALS` (the host/environment globals, each classified present-in-the-sandbox XOR absent-with-an-`UNSUPPORTED_GLOBALS`-row — never both, never neither — an invariant locked by table-driven tests in `dialect/signals.test.ts`, so the vocabulary cannot drift from the real sandbox)
+- `pi-globals.ts` — the single home for the sandbox environment vocabulary: `PI_LOOKUP_HELPERS` (the promise-returning helpers — the await pass's `ASYNC_GLOBALS` and a detector signal), `PI_SANDBOX_GLOBALS` (every non-tool identifier pi injects), `PI_WRAPPER_PARAMS` (the parameters of pi's wrapper function `(async (tools, console) => { … })` — a top-level lexical declaration of either name is a sandbox syntax error, consumed by `passes/wrapper.ts`), `PI_SANDBOX_BUILTINS` and `JS_GLOBALS` (QuickJS builtins and ambient language globals verified present in the sandbox, so the translator never mistakes one for a provider namespace or a bare tool), and `PI_SANDBOX_HOST_GLOBALS` (the host/environment globals, each classified present-in-the-sandbox XOR absent-with-an-`UNSUPPORTED_GLOBALS`-row — never both, never neither — an invariant locked by table-driven tests in `dialect/signals.test.ts`, so the vocabulary cannot drift from the real sandbox). `JS_GLOBALS`/`PI_SANDBOX_BUILTINS`/`PI_SANDBOX_GLOBALS` are additionally reconciled against a **live sandbox probe** by `core/pi-globals.test.ts` (it runs `Object.getOwnPropertyNames(globalThis)` inside Pi's real QuickJS sandbox via `executeCodemode` and fails in both directions: an unclassified sandbox global, or a table entry the sandbox lacks)
 - `shims.ts` — The inline runtime shims the translator splices in (`OPENCODE_SEARCH_SHIM`, `CLOUDFLARE_SEARCH_SHIM`/`DESCRIBE_SHIM`, `CODEMODE_KEYS_SHIM`, `namespaceKeysShim`) and the Cloudflare platform-method registry (`CLOUDFLARE_PLATFORM_SHIMS`/`_UNSUPPORTED`/`_METHODS`)
 - `guards.ts` — `isRecord`
 - `lexical.ts` — `stripComments` for the unparseable-TypeScript signal fallback
@@ -59,6 +59,7 @@ Root files:
 - `program.ts` — JSON tool-call programs → `await tools.<id>({...})` JavaScript
 - `typescript.ts` — TypeScript syntax stripping via sucrase (TanStack's `execute_typescript`, Vercel's `{ js }`, DeepSeek PTC's `run_code`, and any stray TypeScript)
 - `iife.ts` — Redundant async-IIFE unwrapping
+- `wrapper.ts` — Renames a top-level lexical `tools`/`console` declaration that collides with pi's wrapper parameter (`renameWrapperParams(code)`, pass id `rename-wrapper-params(N)`); `var`/`function` declarations and nested-scope declarations are legal and left alone
 - `await-inject.ts` — acorn-based missing-`await` repair (the pi #10555 bug)
 - `rewrite.ts` — catalog-aware `tools["a-b"]` → `tools.a_b` identifier rewriting (`rewriteToolIdentifiers(code, tools?)`)
 
@@ -105,11 +106,12 @@ Passes run in this order and each may be skipped independently:
 4. `tanstack-typescript` / `vercel-typescript` / `ptc-typescript` — when the detected dialect is `tanstack`, `vercel`, or `ptc`; strips TypeScript syntax via sucrase before `unwrap-iife` can parse it
 5. `strip-typescript` — generic TypeScript fallback: only when the dialect is `unknown` and acorn cannot parse the script; best-effort sucrase strip, then the dialect is re-detected (never runs after a dialect TypeScript pass already ran)
 6. `unwrap-iife`
-7. `translate-statements` — one statement-based pass over every dialect construct, with a `<dialect>-dialect(N)` id per group that fired (`opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, `codex`, `bare`)
-8. `await-async-calls(N)` — insert missing `await` on `tools.*`/lookup helpers
-9. `rewrite-tool-identifiers` — `tools["a-b"]` → `tools.a_b`; catalog-aware: with `options.tools` given, the written raw name resolves through `resolveToolPath` first, otherwise the naive `toCodemodeIdentifier` is used
+7. `rename-wrapper-params(N)` — pi runs the script as the body of `(async (tools, console) => { … })`, so a top-level lexical `let`/`const`/`class tools` (or `console`, including destructuring bindings) is a sandbox syntax error (QuickJS `invalid redefinition of parameter name`); renames the binding and every reference that resolves to it to the first `name_` chain unused in the script. Runs after `unwrap-iife` (an unwrapped IIFE body can introduce the collision) and before translation (the dialect rules must see the wrapper's real `tools` again). `var`/`function` declarations and nested-scope declarations shadow the parameter legally and are left alone
+8. `translate-statements` — one statement-based pass over every dialect construct, with a `<dialect>-dialect(N)` id per group that fired (`opencode`, `cloudflare`, `tanstack`, `vercel`, `ptc`, `codex`, `bare`)
+9. `await-async-calls(N)` — insert missing `await` on `tools.*`/lookup helpers
+10. `rewrite-tool-identifiers` — `tools["a-b"]` → `tools.a_b`; catalog-aware: with `options.tools` given, the written raw name resolves through `resolveToolPath` first, otherwise the naive `toCodemodeIdentifier` is used
 
-A JSON program (pass 3) is compiler-generated JavaScript: it skips the statement translation and runs only `await-async-calls` and `rewrite-tool-identifiers` on the generated script, so raw-JavaScript string steps still get awaited and rewritten.
+A JSON program (pass 3) is compiler-generated JavaScript: it skips the TypeScript passes and the statement translation and runs only `rename-wrapper-params`, `await-async-calls` and `rewrite-tool-identifiers` on the generated script, so raw-JavaScript string steps still get renamed, awaited and rewritten.
 
 ## Statement translation (`translate.ts`)
 
