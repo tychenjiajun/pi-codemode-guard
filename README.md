@@ -140,6 +140,7 @@ Two hooks, installed automatically:
 | `ptc-typescript` | `let total: number = 0;` | `let total = 0;` |
 | `strip-typescript` | `const n: number = 1;` (no dialect claimed it) | `const n = 1;` |
 | `unwrap-iife` | `(async () => { … })();` | `…` |
+| `rename-wrapper-params` | `const tools = await searchTools("x");` | `const tools_ = await searchTools("x");` — pi runs the script as `(async (tools, console) => { … })`, so a top-level lexical `tools`/`console` is a sandbox syntax error |
 | `translate-statements` | one statement-based pass over every dialect construct | OpenCode/Cloudflare/TanStack/Vercel/PTC/Codex constructs translated independently |
 | `opencode-dialect` | `await tools.orders.lookup({…})` | `await tools.orders_lookup({…})` |
 | `cloudflare-dialect` | `await codemode.lookupOrder({…})` | `await tools.lookupOrder({…})` |
@@ -154,8 +155,8 @@ Two hooks, installed automatically:
 Every pass is independent, idempotent, and best-effort. A script that does not
 parse is returned unchanged with a warning, so a guard bug can never block a
 tool call. A JSON tool-call program is compiler-generated JavaScript: it skips
-statement translation and runs only `await-async-calls` and
-`rewrite-tool-identifiers` on the result.
+statement translation and runs only `rename-wrapper-params`,
+`await-async-calls` and `rewrite-tool-identifiers` on the result.
 
 Translation is **statement-based**: a snippet may mix dialects, and each
 construct is repaired by its shape rather than by one dialect detected for the

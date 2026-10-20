@@ -54,6 +54,7 @@ text(`${a.length} + ${b.length} bytes`);
 | `const n: number = 1;` as a whole script (no dialect claimed it) | acorn cannot parse TypeScript | `strip-typescript` (generic fallback, then re-detect the dialect) |
 | `(async () => { … })();` | redundant wrapper; unawaited it may never run | `unwrap-iife` |
 | `const hits = searchTools("x");` | promise serialized as `{}` (pi issue #10555) | `await-async-calls` |
+| `const tools = await searchTools("x");` | pi runs the script as `(async (tools, console) => { … })`; a top-level lexical `tools`/`console` redeclares a wrapper parameter — sandbox `SyntaxError: invalid redefinition of parameter name` at parse time | `rename-wrapper-params` |
 | `const r = tools.bash({ command: "ls" });` | unawaited promise, results never used | `await-async-calls` |
 | `tools["mcp__dev-radius__search"]({…})` | bracket access with the raw name, or a syntax error for `-` | `rewrite-tool-identifiers` (and `vercel-dialect` for Vercel source) |
 | `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | Codex's pragma, not Pi's | `normalize-options-line` (`max_output_tokens` kept, `yield_time_ms` dropped with a warning) |
@@ -305,9 +306,10 @@ tool_call event (index.ts)
     4 tanstack/vercel/ptc-typescript  (only when the dialect is tanstack, vercel, or ptc: strip TypeScript syntax)
     5 strip-typescript      (only when the dialect is unknown and acorn cannot parse: generic TS fallback, then re-detect)
     6 unwrap-iife
-    7 translate-statements  (one statement-based pass: every dialect construct, by shape)
-    8 await-async-calls
-    9 rewrite-tool-identifiers   (catalog-aware: resolves the written raw name against `tools` first)
+    7 rename-wrapper-params  (a top-level lexical `const tools`/`console` redeclares a wrapper parameter of `(async (tools, console) => { … })` — a sandbox syntax error; renamed with its references)
+    8 translate-statements  (one statement-based pass: every dialect construct, by shape)
+    9 await-async-calls
+    10 rewrite-tool-identifiers   (catalog-aware: resolves the written raw name against `tools` first)
         │  compiled code
         ▼
 codemode sandbox executes the script
@@ -328,8 +330,8 @@ mixes dialects is fully translated. `passes` reports `translate-statements` plus
 a `<dialect>-dialect(N)` id for each group that fired.
 
 A JSON program (pass 3) is compiler-generated JavaScript: it skips statement
-translation and runs only `await-async-calls` and `rewrite-tool-identifiers` on
-the result.
+translation and runs only `rename-wrapper-params`, `await-async-calls` and
+`rewrite-tool-identifiers` on the result.
 
 ## Why some things are deliberately *not* fixed
 

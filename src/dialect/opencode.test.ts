@@ -81,7 +81,11 @@ describe("compileOpencodeDialect", () => {
     const code = LOCAL_TOOLS_SCRIPT;
     const result = compileCodemodeSource(code, { tools: ["orders.lookup"] });
     expect(result.code).not.toContain("orders_lookup");
-    expect(result.code).toContain("tools.orders.lookup(1)");
+    // The full pipeline renames the colliding top-level `const tools` — a
+    // lexical redeclaration of pi's wrapper parameter is a sandbox syntax
+    // error — and still leaves the script's own tool path untouched.
+    expect(result.code).toContain("tools_.orders.lookup(1)");
+    expect(result.passes).toContain("rename-wrapper-params(1)");
   });
 
   it("resolves a server.local path against an mcp__ catalog name", () => {

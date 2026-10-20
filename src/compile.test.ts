@@ -435,4 +435,30 @@ describe("JSON tool-call programs", () => {
     expect(twice.changed).toBe(false);
     expect(twice.code).toBe(once.code);
   });
+
+  it("renames a top-level const tools that collides with pi's wrapper parameter", () => {
+    const result = compileCodemodeSource(
+      'const tools = await searchTools("wiki", { limit: 30 });\ntext(JSON.stringify(tools));',
+    );
+    expect(result.changed).toBe(true);
+    expect(result.passes).toEqual(["rename-wrapper-params(1)"]);
+    expect(result.code).toBe('const tools_ = await searchTools("wiki", { limit: 30 });\ntext(JSON.stringify(tools_));');
+    // Idempotent: the renamed script no longer collides.
+    const twice = compileCodemodeSource(result.code);
+    expect(twice.changed).toBe(false);
+    expect(twice.code).toBe(result.code);
+  });
+
+  it("renames after unwrapping an IIFE that introduced the collision", () => {
+    const result = compileCodemodeSource("(async () => {\n  const tools = 1;\n  return tools;\n})();");
+    expect(result.passes).toEqual(["unwrap-iife", "rename-wrapper-params(1)"]);
+    expect(result.code).toBe("const tools_ = 1;\n  return tools_;");
+  });
+
+  it("renames a colliding binding declared in a JSON program string step", () => {
+    const result = compileCodemodeSource('["const tools = 1;", "text(String(tools))"]');
+    expect(result.passes).toContain("compile-json-program");
+    expect(result.passes).toContain("rename-wrapper-params(1)");
+    expect(result.code).toBe("const tools_ = 1;\ntext(String(tools_))");
+  });
 });

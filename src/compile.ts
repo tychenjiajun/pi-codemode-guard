@@ -23,15 +23,19 @@
 //                                  PTC code mode); `strip-typescript` is the
 //                                  generic fallback when no dialect claimed it
 //   5. unwrap-iife               — drop a redundant async IIFE wrapper
-//   6. translate-statements      — one statement-based pass over every dialect
+//   6. rename-wrapper-params      — rename a top-level `const/let/class tools`
+//                                  (or `console`) that collides with pi's
+//                                  wrapper parameter (`(async (tools, console)
+//                                  => { … })`)
+//   7. translate-statements      — one statement-based pass over every dialect
 //                                  construct (OpenCode, Cloudflare, TanStack,
 //                                  Vercel, PTC, Codex) plus bare tool calls
-//   7. await-async-calls         — add the `await` models forget (pi #10555)
-//   8. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
+//   8. await-async-calls         — add the `await` models forget (pi #10555)
+//   9. rewrite-tool-identifiers  — `tools["a-b"]` -> `tools.a_b`
 //
-// A JSON program (pass 3) is compiler-generated JavaScript: it skips passes 4–6
-// and runs only 7–8 on the result, so raw-JavaScript string steps still get
-// awaited and rewritten.
+// A JSON program (pass 3) is compiler-generated JavaScript: it skips passes 4–5
+// and 7, and runs only 6, 8–9 on the result, so raw-JavaScript string steps
+// still get awaited and rewritten.
 //
 // A pass that would need a parse is skipped when the script does not parse, so
 // a guard bug can never corrupt a script beyond what lexical passes already did.
@@ -46,6 +50,7 @@ import { parseScript } from "./core/parse.ts";
 import { rewriteToolIdentifiers } from "./passes/rewrite.ts";
 import { translateCodemode, type TranslateGroup } from "./dialect/translate.ts";
 import { stripTypeScriptSyntax } from "./passes/typescript.ts";
+import { renameWrapperParams } from "./passes/wrapper.ts";
 
 export interface CompileOptions {
   /**
@@ -143,8 +148,14 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
         // needs no statement translation. `parsed` stays true — the source was
         // recognized (as a JSON tool-call program) and compiled. String steps are
         // raw JS emitted verbatim, so the compiler-generated script still gets
-        // the await repair (pi #10555) and identifier rewrite; otherwise
+        // the await repair (pi #10555), the wrapper-parameter rename, and
+        // identifier rewrite; otherwise
         // `compile(compile(x)) !== compile(x)` on those steps.
+        const wrapper = renameWrapperParams(body);
+        if (wrapper && wrapper.renamed > 0) {
+          body = wrapper.code;
+          passes.push(`rename-wrapper-params(${wrapper.renamed})`);
+        }
         const awaited = injectAwait(body);
         if (awaited === undefined) {
           warnings.push("could not parse a raw-JavaScript step in the JSON program; skipped await and identifier passes");
@@ -206,6 +217,17 @@ export function compileCodemodeSource(input: string, options: CompileOptions = {
     if (iife.changed) {
       body = iife.code;
       passes.push("unwrap-iife");
+    }
+
+    // Pi runs the script as the body of `(async (tools, console) => { … })`, so
+    // a top-level lexical `const tools` (or `console`) is a syntax error in the
+    // sandbox. Renamed before translation, so the dialect rules see the wrapper's
+    // real `tools` object again — a script that binds its own `tools` must not
+    // have its `tools.<ns>.<tool>` paths flattened.
+    const wrapper = renameWrapperParams(body);
+    if (wrapper && wrapper.renamed > 0) {
+      body = wrapper.code;
+      passes.push(`rename-wrapper-params(${wrapper.renamed})`);
     }
 
     // Statement-based translation: every construct, in every dialect, by shape.

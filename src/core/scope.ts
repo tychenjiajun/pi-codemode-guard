@@ -59,8 +59,8 @@ function within(node: AstNode, container: AstNode | undefined | null): boolean {
   return node.start >= container.start && node.end <= container.end;
 }
 
-/** Whether a binding pattern (parameter, declarator id) binds `name`. */
-function patternBinds(pattern: AstNode | undefined | null, name: string): boolean {
+/** Whether a binding pattern (parameter, declarator id, catch param) binds `name`. */
+export function patternBinds(pattern: AstNode | undefined | null, name: string): boolean {
   if (!pattern) return false;
   let found = false;
   const visit = (node: AstNode | undefined | null): void => {
