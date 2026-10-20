@@ -75,6 +75,23 @@ describe("renameWrapperParams", () => {
     expect(rename(code)).toBe("const tools_ = 1;\nfunction f() { return tools_; }\nconst g = () => tools_ + 1;");
   });
 
+  it("leaves a class static block's own binding alone", () => {
+    // A static block is its own var/lexical scope (supported by pi's QuickJS),
+    // so its `tools` shadows the wrapper parameter — and the script's top-level
+    // `tools` — legally. Capturing it would silently change the output.
+    expect(rename("const tools = 1;\nclass A { static { const tools = 2; text(String(tools)); } }")).toBe(
+      "const tools_ = 1;\nclass A { static { const tools = 2; text(String(tools)); } }",
+    );
+    expect(rename("const tools = 1;\nclass A { static { var tools = 2; text(String(tools)); } }")).toBe(
+      "const tools_ = 1;\nclass A { static { var tools = 2; text(String(tools)); } }",
+    );
+    // A static block that does *not* bind the name still references the
+    // top-level binding, so that reference is renamed.
+    expect(rename("const tools = 1;\nclass A { static { text(String(tools)); } }")).toBe(
+      "const tools_ = 1;\nclass A { static { text(String(tools_)); } }",
+    );
+  });
+
   it("leaves references that resolve to a shadowing binding alone", () => {
     // The top-level const still collides and is renamed; the arrow's own
     // `tools` parameter — and its references — are a different binding.

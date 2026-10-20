@@ -156,9 +156,12 @@ function functionScopeBinds(fn: AstNode, name: string): boolean {
 
 /**
  * Whether a reference at `parents` resolves to the script's top-level binding
- * of `name`: no enclosing function, block, switch, for or catch scope binds
- * the name on the way out. Iterates innermost-first, the same way
- * `isShadowedAt` does.
+ * of `name`: no enclosing function, block, switch, for, catch or class
+ * static-block scope binds the name on the way out. Iterates innermost-first,
+ * the same way `isShadowedAt` does. Every ES scope form that can bind a name
+ * lexically is listed in the `switch` below — adding one there and forgetting
+ * it here captures a shadowed reference without changing the script's shape,
+ * so the omission fails silently.
  */
 function resolvesToTopLevelBinding(name: string, parents: readonly AstNode[]): boolean {
   for (let i = parents.length - 1; i >= 0; i--) {
@@ -195,6 +198,14 @@ function resolvesToTopLevelBinding(name: string, parents: readonly AstNode[]): b
         if (left.type === "VariableDeclaration" && left.kind !== "var" && statementsBind([left], name)) return false;
         continue;
       }
+      case "StaticBlock":
+        // A class static block is its own var/lexical scope, and the sandbox
+        // (verified in pi's QuickJS) supports it: `class A { static { const
+        // tools = 2 } }` is legal next to the wrapper parameter. Missing this
+        // scope would capture the block's own `tools` for the top-level one and
+        // silently change the program's output.
+        if (statementsBind(ancestor.body as AstNode[], name) || varBinds(ancestor, name)) return false;
+        continue;
       default:
         continue;
     }
