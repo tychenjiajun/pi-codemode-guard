@@ -3,7 +3,7 @@
 English | [简体中文](./docs/README.zh-CN.md)
 
 <p align="center">
-  <img src="./assets/preview.svg" alt="pi-codemode-guard compiles LLM codemode scripts before they reach the QuickJS sandbox" width="880">
+  <img src="https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/preview.png" alt="pi-codemode-guard compiles LLM codemode scripts before they reach the QuickJS sandbox" width="880">
 </p>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -15,6 +15,10 @@ English | [简体中文](./docs/README.zh-CN.md)
 [![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
+
+**Install:** `pi install npm:pi-codemode-guard` ·
+[Gallery](https://pi.dev/packages/pi-codemode-guard) ·
+[Docs](https://pi.dev/docs/latest/packages)
 
 > **In one sentence:** *a best-effort, idempotent compiler that turns broken
 > codemode tool calls from any LLM into the exact JavaScript pi's QuickJS
@@ -39,7 +43,7 @@ an unawaited tool call is silently JSON-serialized as `{}`.
 ## Before → after
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="The model writes a fenced script without await; pi-codemode-guard compiles it; the sandbox receives await searchTools(…)" width="880">
+  <img src="https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/demo.gif" alt="The model writes a fenced script without await; pi-codemode-guard compiles it; the sandbox receives await searchTools(…)" width="880">
 </p>
 
 Real output of `compileCodemodeSource`, the compiler every `codemode` call
@@ -459,7 +463,7 @@ It follows the [package contract](https://pi.dev/docs/latest/packages) too:
 
 | Package contract | How this package complies |
 |---|---|
-| Manifest | `"pi": { "extensions": ["./src/index.ts"], "image": "./assets/preview.svg" }` |
+| Manifest | `"pi": { "extensions": ["./src/index.ts"], "image": "https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/preview.png" }` |
 | Gallery eligibility | the `pi-package` keyword is present, and `pi.image` supplies the gallery preview |
 | Host packages | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are `peerDependencies` with a `"*"` range and are never bundled |
 | Runtime dependencies | `acorn` and `sucrase` are real `dependencies`, installed with the package |
@@ -488,12 +492,31 @@ do not understand.
 
 ## FAQ
 
-### What is codemode in pi?
+### What is pi-codemode-guard?
 
-`codemode` is pi's tool for writing one JavaScript script that calls pi's other
-tools in a single step. The script runs as the body of an async function inside
-a QuickJS sandbox (no Node, filesystem, network, or timers); only its output is
-returned to the model. Correct input is exactly `{ code: <raw JavaScript> }`.
+`pi-codemode-guard` is a [Pi package](https://pi.dev/packages/pi-codemode-guard)
+that compiles LLM-written `codemode` scripts — `codemode` is pi's tool for
+running one model-written JavaScript script that calls pi's other tools inside
+a QuickJS sandbox — into the exact JavaScript the sandbox expects. Every pass
+is best-effort and idempotent: a script that does not parse is returned
+unchanged with a warning, so a guard bug can never block a tool call.
+
+### Does it work with the OpenCode/Codex code mode dialects?
+
+Yes — it detects and translates the OpenCode, OpenAI Codex, Cloudflare agents,
+TanStack AI, Vercel AI SDK, and DeepSeek Harness PTC code mode dialects into
+pi's own dialect, resolving tool paths and namespaces against pi's live tool
+catalog. Each dialect is an independent, idempotent compile pass, and input
+that does not parse is left untouched.
+
+### How is it different from forking codemode?
+
+It does not fork anything: it re-registers the canonical
+`createCodemodeExtension()` through a small proxy, keeping the original schema,
+`models`, `store()` persistence, and `codemode.mode` so it coexists with the
+built-in tool. It does replace the built-in registration — disable the built-in
+copy (`"extensions": ["-builtin:codemode"]`) if you want pi to stop warning
+about the replacement.
 
 ### Why does my codemode call return an empty `{}`?
 
@@ -501,33 +524,6 @@ Because the script contained an un-awaited promise (typically
 `searchTools(...)` or a `models.*` call). The pending promise is
 JSON-serialized as `{}`, so the tool silently returns nothing. The
 `await-async-calls` pass inserts the missing `await` automatically.
-
-### What model mistakes does pi-codemode-guard fix?
-
-Markdown code fences, JSON tool-call programs, field-name aliases (`script`,
-`source`, `javascript`, …), relaxed `/* @options: … */` lines, redundant async
-IIFE wrappers, stray TypeScript annotations outside any dialect, missing `await`
-on async helpers, `tools["a-b"](…)` indexing,
-and OpenCode / Cloudflare / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC /
-OpenAI Codex
-code mode dialect tool
-paths and namespaces — each an independent, idempotent compile pass.
-
-### Can a guard bug break my script?
-
-No. Every pass is best-effort: a script that does not parse is returned
-unchanged with a warning instead of throwing, and each pass can be skipped
-independently. `compile(compile(x)) === compile(x)` is guaranteed by the test
-suite.
-
-### Does it replace pi's built-in codemode tool?
-
-It re-registers the canonical `createCodemodeExtension()` factory through a
-small proxy, keeping the original schema, `models`, `store()` persistence, and
-`codemode.mode` — so it coexists with, rather than forks, the built-in tool. It
-replaces the built-in registration, so disable the built-in copy
-(`"extensions": ["-builtin:codemode"]`) if you want pi to stop warning about
-the replacement.
 
 ## Development
 

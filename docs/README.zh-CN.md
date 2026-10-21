@@ -3,7 +3,7 @@
 [English](../README.md) | 简体中文
 
 <p align="center">
-  <img src="../assets/preview.svg" alt="pi-codemode-guard 在脚本进入 QuickJS 沙箱之前编译 LLM 写的 codemode 脚本" width="880">
+  <img src="https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/preview.png" alt="pi-codemode-guard 在脚本进入 QuickJS 沙箱之前编译 LLM 写的 codemode 脚本" width="880">
 </p>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
@@ -15,6 +15,10 @@
 [![CI](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tychenjiajun/pi-codemode-guard/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/pi-codemode-guard.svg)](https://www.npmjs.com/package/pi-codemode-guard)
 [![pnpm](https://img.shields.io/badge/package%20manager-pnpm-f69220.svg)](https://pnpm.io)
+
+**安装：** `pi install npm:pi-codemode-guard` ·
+[展示廊](https://pi.dev/packages/pi-codemode-guard) ·
+[文档](https://pi.dev/docs/latest/packages)
 
 > **一句话概括：** *一个尽力而为、幂等的编译器，把任意 LLM 写坏的 codemode 工具
 > 调用转换成 pi 的 QuickJS 沙箱所期望的确切 JavaScript —— 且完全不 fork codemode
@@ -36,7 +40,7 @@ JavaScript、规范化 `@options:` / `@exec:` pragma、拆掉多余的 async IIF
 ## 修复前 → 修复后
 
 <p align="center">
-  <img src="../assets/demo.gif" alt="模型写了带围栏且缺 await 的脚本；pi-codemode-guard 编译后，沙箱收到 await searchTools(…)" width="880">
+  <img src="https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/demo.gif" alt="模型写了带围栏且缺 await 的脚本；pi-codemode-guard 编译后，沙箱收到 await searchTools(…)" width="880">
 </p>
 
 以下都是 `compileCodemodeSource`（每次 `codemode` 调用都会经过的编译器）的真实输出：
@@ -416,7 +420,7 @@ pi -e npm:pi-codemode-guard
 
 | 包契约 | 本包的遵守方式 |
 |---|---|
-| 清单 | `"pi": { "extensions": ["./src/index.ts"], "image": "./assets/preview.svg" }` |
+| 清单 | `"pi": { "extensions": ["./src/index.ts"], "image": "https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/preview.png" }` |
 | 展示廊资格 | 带 `pi-package` 关键字，`pi.image` 提供展示廊预览图 |
 | 宿主包 | `@earendil-works/pi-coding-agent` 与 `@earendil-works/pi-tui` 以 `"*"` 范围声明在 `peerDependencies`，从不打包进产物 |
 | 运行时依赖 | `acorn`、`sucrase` 是真正的 `dependencies`，随包安装 |
@@ -444,37 +448,33 @@ interface PiCodemodeGuardDetails {
 
 ## 常见问题
 
-### pi 里的 codemode 是什么？
+### pi-codemode-guard 是什么？
 
-`codemode` 是 pi 的一个工具，让模型用一段 JavaScript 脚本一次性调用 pi 的其他工具。
-脚本作为 async 函数体运行在 QuickJS 沙箱中（没有 Node、文件系统、网络和定时器）；
-只有它的输出会返回给模型。正确的输入恰好是 `{ code: <原始 JavaScript> }`。
+`pi-codemode-guard` 是一个 [Pi 包](https://pi.dev/packages/pi-codemode-guard)：
+`codemode` 是 pi 的工具，让模型写的一段 JavaScript 脚本在 QuickJS 沙箱里调用 pi 的
+其他工具，而本扩展把模型写坏的 `codemode` 脚本编译成沙箱所期望的确切 JavaScript。
+每个 pass 都尽力而为且幂等：无法解析的脚本会原样返回并附带警告，因此 guard 自身的
+bug 永远不会阻塞工具调用。
+
+### 它支持 OpenCode / Codex code mode 方言吗？
+
+支持 —— 它能检测并翻译 OpenCode、OpenAI Codex、Cloudflare agents、TanStack AI、
+Vercel AI SDK 与 DeepSeek Harness PTC code mode 方言，把工具路径与命名空间按 pi 的
+实时工具目录解析到 pi 自己的方言。每个方言都是独立、幂等的编译 pass，无法解析的
+输入会原样保留。
+
+### 它和 fork codemode 有什么区别？
+
+它不 fork 任何代码：通过一个小代理重新注册规范的 `createCodemodeExtension()`，
+保留原始 schema、`models`、`store()` 持久化和 `codemode.mode`，因此与内置工具
+共存。它确实替换了内置注册 —— 若不想再收到替换警告，请禁用内置副本
+（`"extensions": ["-builtin:codemode"]`）。
 
 ### 为什么我的 codemode 调用返回空的 `{}`？
 
 因为脚本里有未 await 的 promise（通常是 `searchTools(...)` 或 `models.*` 调用）。
 待定的 promise 被 JSON 序列化成 `{}`，工具于是静默地什么也没返回。
 `await-async-calls` pass 会自动补上缺失的 `await`。
-
-### pi-codemode-guard 修复哪些模型错误？
-
-markdown 代码围栏、JSON 工具调用程序、字段名别名（`script`、`source`、
-`javascript`、…）、宽松的 `/* @options: … */` 行、多余的 async IIFE 包装、
-方言之外的零散 TypeScript 注解、异步辅助函数缺失的 `await`、`tools["a-b"](...)` 索引写法，以及 OpenCode / Cloudflare
-/ TanStack AI / Vercel AI SDK / DeepSeek Harness PTC / OpenAI Codex code mode 方言的工具路径与命名空间 —— 每一项都是独立、幂等的编译 pass。
-
-### 本扩展的 bug 会弄坏我的脚本吗？
-
-不会。每个 pass 都尽力而为：无法解析的脚本会原样返回并附带警告，而不是抛错，
-并且每个 pass 都可以独立跳过。测试套件保证
-`compile(compile(x)) === compile(x)`。
-
-### 它会替换 pi 内置的 codemode 工具吗？
-
-它通过一个小代理重新注册规范的 `createCodemodeExtension()` 工厂，保留原始 schema、
-`models`、`store()` 持久化和 `codemode.mode` —— 因此它是与内置工具共存，
-而不是 fork 内置工具。它替换了内置注册，因此若想不再收到替换警告，
-请禁用内置副本（`"extensions": ["-builtin:codemode"]`）。
 
 ## 开发
 

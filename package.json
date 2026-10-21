@@ -2,7 +2,7 @@
   "name": "pi-codemode-guard",
   "version": "0.1.6",
   "type": "module",
-  "description": "Pi extension that compiles LLM-written codemode scripts into pi's codemode syntax: tolerant argument shapes, markdown fences, @options/@exec pragmas, IIFE wrappers, JSON tool-call programs, missing await, bare tool calls, and the OpenCode / Cloudflare agents / TanStack AI / Vercel AI SDK / DeepSeek Harness PTC / OpenAI Codex code mode dialects",
+  "description": "Pi extension that compiles LLM codemode scripts into pi's QuickJS-sandbox JavaScript: adds missing await, strips markdown fences, converts JSON tool-call programs, and translates OpenCode, Codex, Cloudflare, TanStack, Vercel, DeepSeek PTC dialects",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
@@ -52,7 +52,7 @@
   ],
   "author": "Jiajun Chen <tychenjiajun@live.cn>",
   "license": "MIT",
-  "homepage": "https://github.com/tychenjiajun/pi-codemode-guard#readme",
+  "homepage": "https://pi.dev/packages/pi-codemode-guard",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tychenjiajun/pi-codemode-guard.git"
@@ -68,6 +68,7 @@
     "assets/preview.svg",
     "assets/preview.png",
     "assets/demo.gif",
+    "assets/demo.mp4",
     "README.md",
     "docs/**",
     "CONTEXT.md",
@@ -77,7 +78,8 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "image": "./assets/preview.svg"
+    "image": "https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/preview.png",
+    "video": "https://raw.githubusercontent.com/tychenjiajun/pi-codemode-guard/main/assets/demo.mp4"
   },
   "engines": {
     "node": ">=22.19.0"
