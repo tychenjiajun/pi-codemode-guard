@@ -1,6 +1,6 @@
 {
   "name": "pi-codemode-guard",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "Pi extension that compiles LLM codemode scripts into pi's QuickJS-sandbox JavaScript: adds missing await, strips markdown fences, converts JSON tool-call programs, and translates OpenCode, Codex, Cloudflare, TanStack, Vercel, DeepSeek PTC dialects",
   "main": "src/index.ts",
