@@ -33,6 +33,88 @@ describe("translateCodemode: bare tool calls", () => {
   });
 });
 
+describe("translateCodemode: blank searchTools query -> ALL_TOOLS", () => {
+  it("converts `searchTools(\"\")` to ALL_TOOLS", () => {
+    const result = translateCodemode("const hits = searchTools(\"\");", {});
+    expect(result.code).toBe("const hits = ALL_TOOLS;");
+    expect(result.groups.pi).toBe(1);
+  });
+
+  it("drops the await when the call is already awaited", () => {
+    const result = translateCodemode("const hits = await searchTools('');", {});
+    expect(result.code).toBe("const hits = ALL_TOOLS;");
+  });
+
+  it("treats a whitespace-only query as blank", () => {
+    const result = translateCodemode('text(searchTools("  "));', {});
+    expect(result.code).toBe("text(ALL_TOOLS);");
+  });
+
+  it("keeps a literal limit as a slice", () => {
+    const result = translateCodemode('const hits = searchTools("", { limit: 5 });', {});
+    expect(result.code).toBe("const hits = ALL_TOOLS.slice(0, 5);");
+  });
+
+  it("leaves a namespace option alone (ALL_TOOLS cannot reproduce it)", () => {
+    const source = 'const hits = searchTools("", { namespace: "orders" });';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves a non-literal option value alone", () => {
+    const source = 'const hits = searchTools("", { limit: max });';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves an accessor option alone (a getter is not a static limit)", () => {
+    const source = 'const hits = searchTools("", { get limit() { return 5; } });';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves a spread option alone", () => {
+    const source = 'const hits = searchTools("", { ...opts });';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves the call when the script binds ALL_TOOLS itself", () => {
+    const source = 'const ALL_TOOLS = 1;\nconst hits = searchTools("");';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves a shadowing parameter's call alone", () => {
+    const source = 'function f(searchTools) { return searchTools(""); }';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("collapses an awaited call inside a larger expression", () => {
+    const result = translateCodemode('for (const t of searchTools("")) text(t.name);', {});
+    expect(result.code).toBe("for (const t of ALL_TOOLS) text(t.name);");
+  });
+
+  it("leaves a non-blank query alone", () => {
+    const source = 'const hits = searchTools("wiki");';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves a `.then` chain alone (an array has no `.then`)", () => {
+    const source = 'searchTools("").then((hits) => text(hits));';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("leaves a locally declared searchTools alone", () => {
+    const source = 'function searchTools(q) { return q; }\nconst hits = searchTools("");';
+    expect(translateCodemode(source, {}).changed).toBe(false);
+  });
+
+  it("is idempotent through the compile pipeline", () => {
+    const once = compileCodemodeSource('const hits = searchTools("");\ntext(hits);');
+    expect(once.code).toBe("const hits = ALL_TOOLS;\ntext(hits);");
+    expect(once.passes).toContain("pi-search-empty(1)");
+    const twice = compileCodemodeSource(once.code);
+    expect(twice.code).toBe(once.code);
+    expect(twice.changed).toBe(false);
+  });
+});
+
 describe("translateCodemode: mixed dialects in one snippet", () => {
   it("translates OpenCode, Cloudflare, TanStack and bare calls together", () => {
     const source = [

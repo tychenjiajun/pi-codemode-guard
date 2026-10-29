@@ -153,6 +153,7 @@ Two hooks, installed automatically:
 | `ptc-dialect` | `await tools["my-tool"]({ q })` | `await tools.my_tool({ q })` |
 | `codex-dialect` | `yield_control()` / Codex-only helpers | left in place with a warning |
 | `bare-tool-calls` | `search({ q })` (a known tool name) | `tools.search({ q })` |
+| `pi-search-empty` | `searchTools("")` / `searchTools("  ")` | `ALL_TOOLS` (+ `.slice(0, N)` for a literal `{ limit: N }`) |
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -388,6 +389,11 @@ dialect exists so a Codex script is reported and its boundaries are surfaced.
 - `ALL_TOOLS` entries are `{ name, description }` objects; model code that
   treats them as strings (e.g. `ALL_TOOLS.filter(n => /x/.test(n))`) is not
   normalized (observed in real sessions).
+- A blank `searchTools("")` becomes `ALL_TOOLS` only when its result is used
+  as a value. A `.then`/`.catch`/`.finally` chain keeps the call (an array has
+  none of them), a `namespace` option keeps it (a `namespace`-filtered entry
+  carries only `{ name, description }`, so `ALL_TOOLS` cannot reproduce it),
+  and a script that binds `searchTools` or `ALL_TOOLS` itself keeps it.
 
 ## Install
 

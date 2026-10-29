@@ -143,6 +143,7 @@ pi install npm:pi-codemode-guard
 | `ptc-dialect` | `await tools["my-tool"]({ q })` | `await tools.my_tool({ q })` |
 | `codex-dialect` | `yield_control()` / Codex 专有辅助函数 | 保留原样并告警 |
 | `bare-tool-calls` | `search({ q })`（已知工具名）| `tools.search({ q })` |
+| `pi-search-empty` | `searchTools("")` / `searchTools("  ")` | `ALL_TOOLS`（字面量 `{ limit: N }` 时再加 `.slice(0, N)`）|
 | `await-async-calls` | `const hits = searchTools("x");` | `const hits = await searchTools("x");` |
 | `rewrite-tool-identifiers` | `tools["mcp__dev-radius__search"](…)` | `tools.mcp__dev_radius__search(…)` |
 
@@ -353,6 +354,10 @@ PTC 的输出通道，与 Pi 兼容。
 - 动态方括号访问（`tools[expr]`，非常量属性）永远不会被改写，且静默无提示。
 - `ALL_TOOLS` 的元素是 `{ name, description }` 对象；把它们当字符串用的模型代码
   （例如 `ALL_TOOLS.filter(n => /x/.test(n))`）不会被规范化（真实会话中观察到）。
+- 空查询 `searchTools("")` 只在结果被当作普通值使用时才会改成 `ALL_TOOLS`：
+  `.then`/`.catch`/`.finally` 链会保留原调用（数组没有这些方法）；`namespace`
+  选项会保留原调用（按 namespace 过滤的条目只有 `{ name, description }`，
+  `ALL_TOOLS` 无法复现）；脚本自己绑定了 `searchTools` 或 `ALL_TOOLS` 时也会保留原调用。
 
 ## 安装
 

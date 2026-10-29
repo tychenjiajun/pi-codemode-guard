@@ -90,6 +90,7 @@ const GROUP_PASSES: ReadonlyArray<readonly [TranslateGroup, string]> = [
   ["vercel", "vercel-dialect"],
   ["ptc", "ptc-dialect"],
   ["codex", "codex-dialect"],
+  ["pi", "pi-search-empty"],
   ["bare", "bare-tool-calls"],
 ];
 

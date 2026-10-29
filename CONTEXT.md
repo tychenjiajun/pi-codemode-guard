@@ -59,6 +59,7 @@ text(`${a.length} + ${b.length} bytes`);
 | `tools["mcp__dev-radius__search"]({…})` | bracket access with the raw name, or a syntax error for `-` | `rewrite-tool-identifiers` (and `vercel-dialect` for Vercel source) |
 | `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}` | Codex's pragma, not Pi's | `normalize-options-line` (`max_output_tokens` kept, `yield_time_ms` dropped with a warning) |
 | `search({ q })` for a live tool named `search` | Pi tools are addressed as `tools.<identifier>` | `bare-tool-calls` (statement translation) |
+| `searchTools("")` / `searchTools("  ")` / `searchTools(``)`` | an empty query has no BM25 terms, so Pi resolves it to `[]` and the "list every tool" intent is silently lost | `pi-search-empty` (statement translation → `ALL_TOOLS`, or `ALL_TOOLS.slice(0, N)` for a literal `{ limit: N }`) |
 
 The three observed real-world failures this extension exists for:
 
@@ -337,6 +338,12 @@ translation and runs only `rename-wrapper-params`, `await-async-calls` and
 
 - **`ALL_TOOLS.filter(n => /x/.test(n))`** — rewriting element access changes
   program semantics; the guard would have to guess the model's intent.
+- **A blank `searchTools("")` whose result is not a plain value** — a
+  `.then`/`.catch`/`.finally` chain would become a `TypeError` on an array, a
+  `namespace` option cannot be reproduced from `ALL_TOOLS` (whose entries carry
+  only `{ name, description }`), any other option shape is not understood, and
+  a script that binds `searchTools` or `ALL_TOOLS` itself owns the identifier —
+  each keeps the original call.
 - **Missing `await` inside a non-async function** — inserting `await` there is a
   syntax error, so the pass skips non-async function scopes.
 - **`Promise.all([tools.a()])`** — the combinator already awaits, so the pass

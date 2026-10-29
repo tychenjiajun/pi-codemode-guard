@@ -11,7 +11,8 @@
 // its shape, not by the snippet's dialect: OpenCode namespace paths and
 // `$codemode.search`, Cloudflare `codemode.*` and named providers, TanStack
 // `external_<tool>` bindings, Vercel/PTC `tools["raw-name"]` access, Codex-only
-// helpers, and bare tool calls (`search(...)` -> `tools.search(...)`). Each
+// helpers, bare tool calls (`search(...)` -> `tools.search(...)`), and Pi-native
+// repairs (`searchTools("")` -> `ALL_TOOLS`). Each
 // construct is matched independently, so one statement can be OpenCode while the
 // next is Vercel.
 //
@@ -45,7 +46,7 @@ import { TANSTACK_BINDING_PREFIX, UNSUPPORTED_GLOBAL_BY_NAME } from "./signals.t
 // name helpers it always has.
 export { cloudflareSanitize, cloudflareUnsanitize } from "../core/cloudflare-names.ts";
 
-export type TranslateGroup = "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "bare" | "runtime";
+export type TranslateGroup = "opencode" | "cloudflare" | "tanstack" | "vercel" | "ptc" | "codex" | "bare" | "pi" | "runtime";
 
 export interface TranslateOptions {
   /** Pi tool names, from `pi.getAllTools()`. */
@@ -116,6 +117,46 @@ function isObjectKeysTarget(node: AstNode, parents: readonly AstNode[]): boolean
   if ((parent.arguments as AstNode[] | undefined)?.[0] !== node) return false;
   const chain = collectChain(parent.callee as AstNode);
   return chain?.root === "Object" && chain.segments.join(".") === "keys";
+}
+
+/** Promise methods a value must still support, so a `.then` chain on it is never rewritten into a non-promise. */
+const PROMISE_PASSTHROUGH_METHODS = new Set(["then", "catch", "finally"]);
+
+/** Whether the node is a string literal (or expression-free template) with no non-whitespace content. */
+function isBlankQuery(node: AstNode): boolean {
+  if (node.type === "Literal" && typeof node.value === "string") return node.value.trim() === "";
+  if (node.type === "TemplateLiteral") {
+    const expressions = (node.expressions as AstNode[] | undefined) ?? [];
+    const quasis = (node.quasis as AstNode[] | undefined) ?? [];
+    if (expressions.length > 0 || quasis.length !== 1) return false;
+    const cooked = (quasis[0]?.value as { cooked?: string } | undefined)?.cooked;
+    return typeof cooked === "string" && cooked.trim() === "";
+  }
+  return false;
+}
+
+/**
+ * The `ALL_TOOLS` replacement for a blank `searchTools` query: `ALL_TOOLS`
+ * itself, `ALL_TOOLS.slice(0, limit)` for a numeric literal `limit`, or
+ * `undefined` when the options cannot be reproduced from `ALL_TOOLS` (a
+ * `namespace` filter has no equivalent, since its entries carry only
+ * `{ name, description }`).
+ */
+function blankSearchReplacement(options: AstNode | undefined): string | undefined {
+  if (options === undefined) return "ALL_TOOLS";
+  if (options.type !== "ObjectExpression") return undefined;
+  let limit: number | undefined;
+  for (const property of (options.properties as AstNode[] | undefined) ?? []) {
+    if (property.type !== "Property" || property.computed === true) return undefined;
+    const key = property.key as AstNode;
+    const keyName =
+      key.type === "Identifier" ? key.name : key.type === "Literal" ? (key.value as unknown) : undefined;
+    if (keyName !== "limit") return undefined;
+    const value = property.value as AstNode;
+    if (value.type !== "Literal" || typeof value.value !== "number") return undefined;
+    limit = value.value;
+  }
+  return limit === undefined ? "ALL_TOOLS" : `ALL_TOOLS.slice(0, ${limit})`;
 }
 
 /**
@@ -386,6 +427,44 @@ export function translateCodemode(code: string, options: TranslateOptions = {}):
             const resolution = resolveToolPath([name], catalog);
             if (resolution.matched !== undefined) {
               push(callee, `tools.${resolution.identifier}`, "bare");
+            }
+          }
+        }
+      }
+
+      // `searchTools("")` — an empty query has no BM25 terms, so Pi's search
+      // resolves to `[]`: the model meant "list every tool". `ALL_TOOLS` is the
+      // same `{ name, description }[]` shape, so splice it in (a literal
+      // `limit` becomes `.slice(0, limit)`). Left alone when the options cannot
+      // be reproduced (`namespace`), when the result feeds a `.then` chain
+      // (an array has none), and when the script binds `searchTools` itself.
+      if (enabled("pi") && !bound.has("ALL_TOOLS")) {
+        const callee = node.callee as AstNode;
+        if (
+          callee.type === "Identifier" &&
+          callee.name === "searchTools" &&
+          !bound.has("searchTools") &&
+          !isShadowedAt(callee, parents, "searchTools")
+        ) {
+          const args = node.arguments as AstNode[];
+          const query = args[0];
+          if (query !== undefined && isBlankQuery(query)) {
+            const parent = parents[parents.length - 1];
+            const property = parent?.type === "MemberExpression" ? (parent.property as AstNode) : undefined;
+            const chained =
+              parent?.type === "MemberExpression" &&
+              parent.object === node &&
+              parent.computed !== true &&
+              property?.type === "Identifier" &&
+              PROMISE_PASSTHROUGH_METHODS.has(property.name as string);
+            const replacement = chained ? undefined : blankSearchReplacement(args[1]);
+            if (replacement !== undefined) {
+              // An already-awaited call becomes the bare `ALL_TOOLS`; awaiting
+              // the array is legal but pointless, and the rewrite stays a
+              // single outermost replacement either way.
+              const target =
+                parent?.type === "AwaitExpression" && parent.argument === node ? parent : node;
+              push(target, replacement, "pi");
             }
           }
         }
