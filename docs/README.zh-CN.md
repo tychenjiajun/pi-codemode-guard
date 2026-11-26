@@ -481,6 +481,24 @@ Vercel AI SDK 与 DeepSeek Harness PTC code mode 方言，把工具路径与命�
 待定的 promise 被 JSON 序列化成 `{}`，工具于是静默地什么也没返回。
 `await-async-calls` pass 会自动补上缺失的 `await`。
 
+## 引用
+
+如果你在研究中使用了 pi-codemode-guard，欢迎按软件引用：
+
+```bibtex
+@misc{chen2026picodemodeguard,
+  author       = {Chen, Jiajun},
+  title        = {pi-codemode-guard},
+  year         = {2026},
+  howpublished = {\url{https://github.com/tychenjiajun/pi-codemode-guard}}
+}
+```
+
+为便于复现，请同时注明所使用的版本或提交，并链接到对应标签或提交。例如，
+`0.1.11` 版本可在 [GitHub](https://github.com/tychenjiajun/pi-codemode-guard/tree/v0.1.11)
+和 [npm](https://www.npmjs.com/package/pi-codemode-guard/v/0.1.11) 查看。
+GitHub 也可以根据 [`CITATION.cff`](../CITATION.cff) 生成引用。
+
 ## 开发
 
 ```bash

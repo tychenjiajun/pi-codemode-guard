@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use pi-codemode-guard in research, please cite it as software."
+type: software
+authors:
+  - family-names: Chen
+    given-names: Jiajun
+title: pi-codemode-guard
+date-released: "2026-10-10"
+repository-code: "https://github.com/tychenjiajun/pi-codemode-guard"
+license: MIT

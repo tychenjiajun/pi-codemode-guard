@@ -531,6 +531,25 @@ Because the script contained an un-awaited promise (typically
 JSON-serialized as `{}`, so the tool silently returns nothing. The
 `await-async-calls` pass inserts the missing `await` automatically.
 
+## Citation
+
+If you use pi-codemode-guard in research, please cite it as software:
+
+```bibtex
+@misc{chen2026picodemodeguard,
+  author       = {Chen, Jiajun},
+  title        = {pi-codemode-guard},
+  year         = {2026},
+  howpublished = {\url{https://github.com/tychenjiajun/pi-codemode-guard}}
+}
+```
+
+For reproducibility, also record the version or commit you used, and link to
+its tag or commit. For example, version `0.1.11` is available at
+[GitHub](https://github.com/tychenjiajun/pi-codemode-guard/tree/v0.1.11) and
+[npm](https://www.npmjs.com/package/pi-codemode-guard/v/0.1.11). GitHub can
+also generate a citation from [`CITATION.cff`](./CITATION.cff).
+
 ## Development
 
 ```bash
